@@ -2,7 +2,7 @@
 name = "ikrs-workspace"
 version = "0.1.0"
 description = "A Tauri App"
-authors = ["you"]
+authors = ["IKAROS <moe@ikaros.ae>"]
 edition = "2021"
 
 [lib]
