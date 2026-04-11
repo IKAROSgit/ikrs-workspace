@@ -1,5 +1,7 @@
 # M2 Embedded Claude — Phase 1: Core Subprocess Implementation Plan
 
+> **STATUS: COMPLETE** — All 13 tasks executed 2026-04-11. Codex review: 8/10 APPROVED WITH CONDITIONS (C1+C2 fixed, C3 deferred to integration testing). Commit: `0bc4d1b`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the M1 external-terminal Claude integration with an embedded headless subprocess piped through the Rust backend into a React chat UI.
@@ -61,13 +63,13 @@
 - Create: `src-tauri/src/claude/types.rs`
 - Create: `src-tauri/src/claude/mod.rs`
 
-- [ ] **Step 1: Create the claude module directory**
+- [x] **Step 1: Create the claude module directory**
 
 ```bash
 mkdir -p src-tauri/src/claude
 ```
 
-- [ ] **Step 2: Write `src-tauri/src/claude/types.rs`**
+- [x] **Step 2: Write `src-tauri/src/claude/types.rs`**
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -236,7 +238,7 @@ pub struct VersionCheck {
 pub const MIN_CLAUDE_VERSION: &str = "2.1.0";
 ```
 
-- [ ] **Step 3: Write `src-tauri/src/claude/mod.rs`**
+- [x] **Step 3: Write `src-tauri/src/claude/mod.rs`**
 
 ```rust
 pub mod auth;
@@ -249,12 +251,12 @@ pub use session_manager::ClaudeSessionManager;
 pub use types::*;
 ```
 
-- [ ] **Step 4: Verify it compiles**
+- [x] **Step 4: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -20`
 Expected: May warn about unused modules (auth, commands, etc. don't exist yet) — that's fine. No type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/claude/
@@ -268,7 +270,7 @@ git commit -m "feat(claude): add stream event types and module structure for M2 
 **Files:**
 - Create: `src-tauri/src/claude/stream_parser.rs`
 
-- [ ] **Step 1: Write `src-tauri/src/claude/stream_parser.rs`**
+- [x] **Step 1: Write `src-tauri/src/claude/stream_parser.rs`**
 
 ```rust
 use crate::claude::types::*;
@@ -547,12 +549,12 @@ fn handle_result_event(raw: &serde_json::Value, app: &AppHandle) {
 }
 ```
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -20`
 Expected: Compiles (may warn about unused imports for modules not yet created — that's OK at this step).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src-tauri/src/claude/stream_parser.rs
@@ -566,7 +568,7 @@ git commit -m "feat(claude): add stream parser with hook filtering and friendly 
 **Files:**
 - Create: `src-tauri/src/claude/session_manager.rs`
 
-- [ ] **Step 1: Write `src-tauri/src/claude/session_manager.rs`**
+- [x] **Step 1: Write `src-tauri/src/claude/session_manager.rs`**
 
 ```rust
 use crate::claude::stream_parser::parse_stream;
@@ -800,12 +802,12 @@ fn classify_exit(code: Option<i32>) -> String {
 }
 ```
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -20`
 Expected: Compiles. Warnings about unused fields are OK.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src-tauri/src/claude/session_manager.rs
@@ -819,7 +821,7 @@ git commit -m "feat(claude): add session manager with spawn, send, kill, and cra
 **Files:**
 - Create: `src-tauri/src/claude/auth.rs`
 
-- [ ] **Step 1: Write `src-tauri/src/claude/auth.rs`**
+- [x] **Step 1: Write `src-tauri/src/claude/auth.rs`**
 
 ```rust
 use crate::claude::types::{AuthStatus, VersionCheck, MIN_CLAUDE_VERSION};
@@ -913,12 +915,12 @@ fn compare_versions(version: &str, minimum: &str) -> bool {
 }
 ```
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -20`
 Expected: Clean compile.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src-tauri/src/claude/auth.rs
@@ -932,7 +934,7 @@ git commit -m "feat(claude): add auth status check and login commands"
 **Files:**
 - Create: `src-tauri/src/claude/commands.rs`
 
-- [ ] **Step 1: Write `src-tauri/src/claude/commands.rs`**
+- [x] **Step 1: Write `src-tauri/src/claude/commands.rs`**
 
 ```rust
 use crate::claude::session_manager::ClaudeSessionManager;
@@ -966,12 +968,12 @@ pub async fn kill_claude_session(
 }
 ```
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -20`
 Expected: Clean compile.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src-tauri/src/claude/commands.rs
@@ -987,13 +989,13 @@ git commit -m "feat(claude): add Tauri IPC command wrappers for session manageme
 - Modify: `src-tauri/src/commands/mod.rs`
 - Delete: `src-tauri/src/commands/claude.rs`
 
-- [ ] **Step 1: Delete old `commands/claude.rs`**
+- [x] **Step 1: Delete old `commands/claude.rs`**
 
 ```bash
 rm src-tauri/src/commands/claude.rs
 ```
 
-- [ ] **Step 2: Update `src-tauri/src/commands/mod.rs`**
+- [x] **Step 2: Update `src-tauri/src/commands/mod.rs`**
 
 Remove `pub mod claude;` line. The file should become:
 
@@ -1004,7 +1006,7 @@ pub mod oauth;
 pub mod vault;
 ```
 
-- [ ] **Step 3: Update `src-tauri/src/lib.rs`**
+- [x] **Step 3: Update `src-tauri/src/lib.rs`**
 
 Replace the entire file with:
 
@@ -1059,12 +1061,12 @@ pub fn run() {
 }
 ```
 
-- [ ] **Step 4: Verify it compiles**
+- [x] **Step 4: Verify it compiles**
 
 Run: `cd src-tauri && cargo check 2>&1 | head -30`
 Expected: Clean compile. No references to old `commands::claude::*`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A src-tauri/src/
@@ -1079,7 +1081,7 @@ git commit -m "feat(claude): wire M2 session manager into Tauri app, remove old 
 - Create: `src/types/claude.ts`
 - Modify: `src/types/index.ts`
 
-- [ ] **Step 1: Write `src/types/claude.ts`**
+- [x] **Step 1: Write `src/types/claude.ts`**
 
 ```typescript
 export type ClaudeSessionStatus =
@@ -1160,7 +1162,7 @@ export interface VersionCheck {
 }
 ```
 
-- [ ] **Step 2: Update `src/types/index.ts`**
+- [x] **Step 2: Update `src/types/index.ts`**
 
 Remove the old `ClaudeSession` interface and add the re-export. Replace:
 
@@ -1179,12 +1181,12 @@ With:
 export type { ChatMessage, ToolActivity, ClaudeSessionStatus, AuthStatus, VersionCheck } from "./claude";
 ```
 
-- [ ] **Step 3: Verify types compile**
+- [x] **Step 3: Verify types compile**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx tsc --noEmit 2>&1 | head -20`
 Expected: May have pre-existing errors from other views but no new errors from `claude.ts`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/types/
@@ -1199,7 +1201,7 @@ git commit -m "feat(claude): add TypeScript types for M2 chat messages, tool act
 - Create: `src/stores/claudeStore.ts`
 - Create: `tests/unit/stores/claudeStore.test.ts`
 
-- [ ] **Step 1: Write the test file `tests/unit/stores/claudeStore.test.ts`**
+- [x] **Step 1: Write the test file `tests/unit/stores/claudeStore.test.ts`**
 
 ```typescript
 import { describe, it, expect, beforeEach } from "vitest";
@@ -1286,12 +1288,12 @@ describe("claudeStore", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx vitest run tests/unit/stores/claudeStore.test.ts 2>&1 | tail -20`
 Expected: FAIL — module `@/stores/claudeStore` not found.
 
-- [ ] **Step 3: Write `src/stores/claudeStore.ts`**
+- [x] **Step 3: Write `src/stores/claudeStore.ts`**
 
 ```typescript
 import { create } from "zustand";
@@ -1438,12 +1440,12 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
 }));
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx vitest run tests/unit/stores/claudeStore.test.ts 2>&1 | tail -20`
 Expected: All 8 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/stores/claudeStore.ts tests/unit/stores/claudeStore.test.ts
@@ -1457,7 +1459,7 @@ git commit -m "feat(claude): add Zustand claudeStore with TDD (8 tests passing)"
 **Files:**
 - Create: `src/hooks/useClaudeStream.ts`
 
-- [ ] **Step 1: Write `src/hooks/useClaudeStream.ts`**
+- [x] **Step 1: Write `src/hooks/useClaudeStream.ts`**
 
 ```typescript
 import { useEffect } from "react";
@@ -1562,7 +1564,7 @@ export function useClaudeStream(): void {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add src/hooks/useClaudeStream.ts
@@ -1576,7 +1578,7 @@ git commit -m "feat(claude): add useClaudeStream hook to bridge Tauri events to 
 **Files:**
 - Modify: `src/lib/tauri-commands.ts`
 
-- [ ] **Step 1: Replace the old Claude command bindings**
+- [x] **Step 1: Replace the old Claude command bindings**
 
 In `src/lib/tauri-commands.ts`, remove the old Claude section (lines 104-122) and replace with:
 
@@ -1615,12 +1617,12 @@ export async function killClaudeSession(sessionId: string): Promise<void> {
 }
 ```
 
-- [ ] **Step 2: Verify TypeScript compiles**
+- [x] **Step 2: Verify TypeScript compiles**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx tsc --noEmit 2>&1 | head -20`
 Expected: No new errors from tauri-commands.ts.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/lib/tauri-commands.ts
@@ -1637,13 +1639,13 @@ git commit -m "feat(claude): update TypeScript command bindings for M2 embedded 
 - Create: `src/components/chat/InputBar.tsx`
 - Create: `src/components/chat/SessionIndicator.tsx`
 
-- [ ] **Step 1: Create directory**
+- [x] **Step 1: Create directory**
 
 ```bash
 mkdir -p src/components/chat
 ```
 
-- [ ] **Step 2: Write `src/components/chat/MessageBubble.tsx`**
+- [x] **Step 2: Write `src/components/chat/MessageBubble.tsx`**
 
 ```tsx
 import { cn } from "@/lib/utils";
@@ -1676,7 +1678,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 }
 ```
 
-- [ ] **Step 3: Write `src/components/chat/ToolActivityCard.tsx`**
+- [x] **Step 3: Write `src/components/chat/ToolActivityCard.tsx`**
 
 ```tsx
 import { cn } from "@/lib/utils";
@@ -1723,7 +1725,7 @@ export function ToolActivityCard({ tool }: ToolActivityCardProps) {
 }
 ```
 
-- [ ] **Step 4: Write `src/components/chat/InputBar.tsx`**
+- [x] **Step 4: Write `src/components/chat/InputBar.tsx`**
 
 ```tsx
 import { useState, useCallback, type KeyboardEvent } from "react";
@@ -1780,7 +1782,7 @@ export function InputBar({ onSend, disabled, placeholder }: InputBarProps) {
 }
 ```
 
-- [ ] **Step 5: Write `src/components/chat/SessionIndicator.tsx`**
+- [x] **Step 5: Write `src/components/chat/SessionIndicator.tsx`**
 
 ```tsx
 import { cn } from "@/lib/utils";
@@ -1825,7 +1827,7 @@ export function SessionIndicator({
 }
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/components/chat/
@@ -1842,7 +1844,7 @@ git commit -m "feat(claude): add chat UI components (MessageBubble, ToolActivity
 - Delete: `src/hooks/useClaude.ts`
 - Modify: `src/Router.tsx`
 
-- [ ] **Step 1: Write `src/views/ChatView.tsx`**
+- [x] **Step 1: Write `src/views/ChatView.tsx`**
 
 ```tsx
 import { useEffect, useRef, useCallback } from "react";
@@ -2010,14 +2012,14 @@ export default function ChatView() {
 }
 ```
 
-- [ ] **Step 2: Delete old files**
+- [x] **Step 2: Delete old files**
 
 ```bash
 rm src/views/ClaudeView.tsx
 rm src/hooks/useClaude.ts
 ```
 
-- [ ] **Step 3: Update `src/Router.tsx`**
+- [x] **Step 3: Update `src/Router.tsx`**
 
 Change the lazy import from `ClaudeView` to `ChatView`:
 
@@ -2039,17 +2041,17 @@ With:
 claude: { component: ChatView, label: "Claude" },
 ```
 
-- [ ] **Step 4: Verify TypeScript compiles**
+- [x] **Step 4: Verify TypeScript compiles**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx tsc --noEmit 2>&1 | head -30`
 Expected: No errors from ChatView or Router.
 
-- [ ] **Step 5: Run all tests**
+- [x] **Step 5: Run all tests**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx vitest run 2>&1 | tail -20`
 Expected: All tests pass (including the 8 new claudeStore tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A src/views/ src/hooks/ src/Router.tsx
@@ -2062,27 +2064,27 @@ git commit -m "feat(claude): replace ClaudeView with ChatView — full embedded 
 
 **Files:** None (verification only)
 
-- [ ] **Step 1: Run Rust build**
+- [x] **Step 1: Run Rust build**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace/src-tauri && cargo build 2>&1 | tail -20`
 Expected: Build succeeds.
 
-- [ ] **Step 2: Run TypeScript typecheck**
+- [x] **Step 2: Run TypeScript typecheck**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx tsc --noEmit 2>&1 | tail -20`
 Expected: No errors.
 
-- [ ] **Step 3: Run all tests**
+- [x] **Step 3: Run all tests**
 
 Run: `cd /home/moe_ikaros_ae/projects/apps/ikrs-workspace && npx vitest run 2>&1 | tail -20`
 Expected: All tests pass.
 
-- [ ] **Step 4: Verify no references to old M1 code remain**
+- [x] **Step 4: Verify no references to old M1 code remain**
 
 Run: `grep -r "claude_preflight\|scaffold_claude_project\|launch_claude\|ClaudeView\|useClaude" src/ src-tauri/src/ --include="*.ts" --include="*.tsx" --include="*.rs" 2>&1`
 Expected: No matches (all old M1 references removed).
 
-- [ ] **Step 5: Commit (if any fixes were needed)**
+- [x] **Step 5: Commit (if any fixes were needed)**
 
 ```bash
 git add -A
