@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ConsultantSchema,
-  ClientSchema,
   EngagementSchema,
-  CredentialSchema,
   TaskSchema,
 } from "@/lib/schemas";
 

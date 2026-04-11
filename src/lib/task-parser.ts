@@ -27,11 +27,13 @@ export function parseTasksMd(
   let sortOrder = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i] ?? "";
     const match = line.match(CHECKBOX_RE);
     if (!match) continue;
 
-    const [, checkbox, title, meta] = match;
+    const checkbox = match[1] ?? " ";
+    const title = match[2] ?? "";
+    const meta = match[3] ?? "";
     const status = checkboxToStatus(checkbox);
     const priorityMatch = meta.match(PRIORITY_RE);
     const priority: TaskPriority = (priorityMatch?.[1] as TaskPriority) ?? "p2";
@@ -39,18 +41,19 @@ export function parseTasksMd(
     let tagMatch: RegExpExecArray | null;
     const tagRe = new RegExp(TAG_RE.source, "g");
     while ((tagMatch = tagRe.exec(meta)) !== null) {
-      tags.push(tagMatch[1]);
+      const tag = tagMatch[1];
+      if (tag !== undefined) tags.push(tag);
     }
     const dueMatch = meta.match(DUE_RE);
-    const dueDate = dueMatch ? new Date(dueMatch[1]) : undefined;
+    const dueDate = dueMatch?.[1] !== undefined ? new Date(dueMatch[1]) : undefined;
 
     const subtasks: Subtask[] = [];
     while (i + 1 < lines.length) {
-      const nextLine = lines[i + 1];
+      const nextLine = lines[i + 1] ?? "";
       const subMatch = nextLine.match(SUBTASK_RE);
       if (!subMatch) break;
       subtasks.push({
-        title: subMatch[2],
+        title: subMatch[2] ?? "",
         done: subMatch[1] === "x",
       });
       i++;
