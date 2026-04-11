@@ -1,8 +1,104 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  RefreshCw,
+  FolderOpen,
+  File,
+  FileText,
+  Image,
+  Search,
+} from "lucide-react";
+import { useDrive } from "@/hooks/useDrive";
+import { useEngagementStore } from "@/stores/engagementStore";
+
+function FileIcon({ mimeType }: { mimeType: string }) {
+  if (mimeType.startsWith("image/"))
+    return <Image size={16} className="text-purple-400" />;
+  if (mimeType.includes("folder"))
+    return <FolderOpen size={16} className="text-yellow-400" />;
+  if (mimeType.includes("document") || mimeType.includes("text"))
+    return <FileText size={16} className="text-blue-400" />;
+  return <File size={16} className="text-muted-foreground" />;
+}
+
 export default function FilesView() {
+  const { files, loading, error, isConnected, refresh, search } = useDrive();
+  const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  if (!activeEngagementId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+        <FolderOpen size={48} className="mb-4 opacity-50" />
+        <p>Select an engagement to browse files.</p>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+        <FolderOpen size={48} className="mb-4 opacity-50" />
+        <p>Connect a Google account in Settings to browse Drive.</p>
+      </div>
+    );
+  }
+
+  const handleSearch = () => {
+    if (searchQuery.trim()) search(searchQuery.trim());
+  };
+
   return (
-    <div className="flex flex-col h-full p-4">
-      <h2 className="text-lg font-semibold mb-4">Files</h2>
-      <p className="text-muted-foreground">Connect a Google account to browse Drive.</p>
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+        <div className="relative flex-1">
+          <Search
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+            size={14}
+          />
+          <Input
+            placeholder="Search files..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+        <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+        </Button>
+      </div>
+
+      {error && (
+        <div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
+          {error}
+        </div>
+      )}
+
+      <ScrollArea className="flex-1">
+        {files.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <p className="text-sm">No files found.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {files.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center gap-3 px-4 py-2 hover:bg-accent/50 cursor-pointer"
+              >
+                <FileIcon mimeType={file.mimeType} />
+                <span className="flex-1 text-sm truncate">{file.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {file.modifiedTime}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </ScrollArea>
     </div>
   );
 }

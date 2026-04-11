@@ -5,10 +5,9 @@ interface McpState {
   servers: McpHealth[];
   setServerHealth: (type: McpServerType, status: McpHealth["status"]) => void;
   setServers: (servers: McpHealth[]) => void;
-  getServer: (type: McpServerType) => McpHealth | undefined;
 }
 
-export const useMcpStore = create<McpState>((set, get) => ({
+export const useMcpStore = create<McpState>((set) => ({
   servers: [],
   setServerHealth: (type, status) =>
     set((state) => ({
@@ -17,5 +16,4 @@ export const useMcpStore = create<McpState>((set, get) => ({
       ),
     })),
   setServers: (servers) => set({ servers }),
-  getServer: (type) => get().servers.find((s) => s.type === type),
 }));

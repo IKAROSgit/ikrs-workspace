@@ -9,6 +9,7 @@ import { ViewRouter } from "@/Router";
 import { useUiStore } from "@/stores/uiStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useMcpStore } from "@/stores/mcpStore";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 function AppContent() {
   const activeView = useUiStore((s) => s.activeView);
@@ -18,6 +19,7 @@ function AppContent() {
   );
   const clients = useEngagementStore((s) => s.clients);
   const mcpServers = useMcpStore((s) => s.servers);
+  const isOnline = useOnlineStatus();
 
   const activeClient = clients.find((c) => c.id === activeEngagement?.clientId);
 
@@ -37,7 +39,7 @@ function AppContent() {
           </main>
         </div>
       </div>
-      <StatusBar connectedEmail={undefined} mcpStatuses={mcpServers} isOnline={true} />
+      <StatusBar connectedEmail={undefined} mcpStatuses={mcpServers} isOnline={isOnline} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import React, { lazy, Suspense } from "react";
+import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 
 const InboxView = lazy(() => import("@/views/InboxView"));
 const CalendarView = lazy(() => import("@/views/CalendarView"));
@@ -10,21 +11,29 @@ const SettingsView = lazy(() => import("@/views/SettingsView"));
 
 export type ViewId = "inbox" | "calendar" | "files" | "tasks" | "notes" | "claude" | "settings";
 
-const VIEW_MAP: Record<ViewId, React.LazyExoticComponent<() => React.JSX.Element>> = {
-  inbox: InboxView,
-  calendar: CalendarView,
-  files: FilesView,
-  tasks: TasksView,
-  notes: NotesView,
-  claude: ClaudeView,
-  settings: SettingsView,
+const VIEW_MAP: Record<ViewId, { component: React.LazyExoticComponent<() => React.JSX.Element>; label: string }> = {
+  inbox: { component: InboxView, label: "Inbox" },
+  calendar: { component: CalendarView, label: "Calendar" },
+  files: { component: FilesView, label: "Files" },
+  tasks: { component: TasksView, label: "Tasks" },
+  notes: { component: NotesView, label: "Notes" },
+  claude: { component: ClaudeView, label: "Claude Code" },
+  settings: { component: SettingsView, label: "Settings" },
 };
 
 export function ViewRouter({ activeView }: { activeView: ViewId }) {
-  const ViewComponent = VIEW_MAP[activeView];
+  const { component: ViewComponent, label } = VIEW_MAP[activeView];
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading...</div>}>
-      <ViewComponent />
-    </Suspense>
+    <ViewErrorBoundary viewName={label} key={activeView}>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            Loading...
+          </div>
+        }
+      >
+        <ViewComponent />
+      </Suspense>
+    </ViewErrorBoundary>
   );
 }
