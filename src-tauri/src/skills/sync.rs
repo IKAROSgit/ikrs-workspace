@@ -22,21 +22,7 @@ pub struct SkillUpdateStatus {
     pub user_marked_custom: Vec<String>,
 }
 
-/// C1 (Codex condition): Validate that engagement_path resolves to within
-/// ~/.ikrs-workspace/vaults/ to prevent path traversal attacks.
-fn validate_engagement_path(path: &str) -> Result<std::path::PathBuf, String> {
-    let p = std::path::PathBuf::from(path);
-    let allowed_base = dirs::home_dir()
-        .ok_or("No home directory")?
-        .join(".ikrs-workspace")
-        .join("vaults");
-    std::fs::create_dir_all(&allowed_base).map_err(|e| e.to_string())?;
-    let resolved = p.canonicalize().unwrap_or(p.clone());
-    if !resolved.starts_with(&allowed_base) {
-        return Err(format!("Path outside allowed vault directory: {}", path));
-    }
-    Ok(resolved)
-}
+use super::validate_engagement_path;
 
 /// C3 (Codex condition): Proper semver comparison instead of string `!=`.
 /// Parses version strings as (major, minor, patch) tuples and compares with `>`.

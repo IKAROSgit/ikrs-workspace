@@ -418,7 +418,7 @@ If any gate fails, state which one and why before proceeding.
 
 ### 3.7 Skill Domain Templates
 
-Each skill folder contains a `CLAUDE.md` with domain-specific instructions. These are the 7 bundled templates:
+Each skill folder contains a `CLAUDE.md` with domain-specific instructions. These are the 8 bundled templates:
 
 #### communications/CLAUDE.md
 ```markdown
@@ -642,14 +642,19 @@ The app binary bundles skill templates at a known version. On engagement open:
 
 ```
 1. Read .skill-version from engagement folder
-2. Compare with bundled template version
+2. Compare with bundled template version (semver comparison: bundled > installed)
 3. If bundled > engagement:
-   a. Check which folders have been customized (modified CLAUDE.md)
-   b. For un-customized folders: update CLAUDE.md silently
-   c. For customized folders: show diff and offer merge
-   d. Update .skill-version
+   a. Check which folders have been customized (CLAUDE.md content differs from bundled default)
+   b. For un-customized folders: show "update available" badge in SkillStatusPanel
+   c. For customized folders: mark as "custom" (protected, never auto-updated)
+   d. Consultant clicks "Update N skills" to apply updates to un-customized folders only
+   e. Update .skill-version to bundled version after applying
 4. If equal: no action
 ```
+
+> **Design decision**: Updates require explicit user action rather than auto-applying silently.
+> This is safer — the consultant sees exactly which domains will be updated before confirming.
+> Customized domains are always protected regardless.
 
 #### Custom Skills
 
