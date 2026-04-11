@@ -133,3 +133,60 @@ export async function sendClaudeMessage(
 export async function killClaudeSession(sessionId: string): Promise<void> {
   return invoke("kill_claude_session", { sessionId });
 }
+
+// Skills — Phase 2
+
+import type {
+  SkillUpdateStatus,
+  ScaffoldSkillsParams,
+  SkillUpdateParams,
+} from "@/types/skills";
+
+export async function scaffoldEngagementSkills(
+  params: ScaffoldSkillsParams,
+): Promise<string> {
+  return invoke("scaffold_engagement_skills_cmd", {
+    engagementPath: params.engagementPath,
+    clientName: params.clientName,
+    clientSlug: params.clientSlug,
+    engagementTitle: params.engagementTitle,
+    engagementDescription: params.engagementDescription,
+    consultantName: params.consultantName,
+    consultantEmail: params.consultantEmail,
+    timezone: params.timezone,
+  });
+}
+
+export async function checkSkillUpdates(
+  params: SkillUpdateParams,
+): Promise<SkillUpdateStatus> {
+  return invoke("check_skill_updates_cmd", {
+    engagementPath: params.engagementPath,
+    clientName: params.clientName,
+    clientSlug: params.clientSlug,
+    engagementTitle: params.engagementTitle,
+    engagementDescription: params.engagementDescription,
+    consultantName: params.consultantName,
+    consultantEmail: params.consultantEmail,
+    timezone: params.timezone,
+    startDate: params.startDate,
+  });
+}
+
+export async function applySkillUpdates(
+  params: SkillUpdateParams,
+  foldersToUpdate: string[],
+): Promise<void> {
+  return invoke("apply_skill_updates_cmd", {
+    engagementPath: params.engagementPath,
+    foldersToUpdate,
+    clientName: params.clientName,
+    clientSlug: params.clientSlug,
+    engagementTitle: params.engagementTitle,
+    engagementDescription: params.engagementDescription,
+    consultantName: params.consultantName,
+    consultantEmail: params.consultantEmail,
+    timezone: params.timezone,
+    startDate: params.startDate,
+  });
+}

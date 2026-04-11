@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-shell";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,9 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEngagementActions } from "@/providers/EngagementProvider";
 import { useEngagementStore } from "@/stores/engagementStore";
-import { startOAuth } from "@/lib/tauri-commands";
+import { startOAuth, scaffoldEngagementSkills } from "@/lib/tauri-commands";
+import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
+import type { SkillUpdateParams } from "@/types/skills";
 
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
@@ -24,37 +26,93 @@ export default function SettingsView() {
   const { consultant, logOut } = useAuth();
   const { createClient, createEngagement } = useEngagementActions();
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
+  const engagements = useEngagementStore((s) => s.engagements);
+  const clients = useEngagementStore((s) => s.clients);
 
   const [clientName, setClientName] = useState("");
   const [clientDomain, setClientDomain] = useState("");
+  const [engagementTitle, setEngagementTitle] = useState("");
+  const [engagementDesc, setEngagementDesc] = useState("");
+  const [creating, setCreating] = useState(false);
   const [oauthStatus, setOauthStatus] = useState<
     "idle" | "pending" | "success" | "error"
   >("idle");
 
+  const skillUpdateParams: SkillUpdateParams | null = useMemo(() => {
+    if (!activeEngagementId || !consultant) return null;
+    const engagement = engagements.find((e) => e.id === activeEngagementId);
+    if (!engagement) return null;
+    const client = clients.find((c) => c.id === engagement.clientId);
+    if (!client) return null;
+
+    return {
+      engagementPath: engagement.vault.path,
+      clientName: client.name,
+      clientSlug: client.slug,
+      engagementTitle: engagement.settings.description ?? `${client.name} Engagement`,
+      engagementDescription: engagement.settings.description ?? `Engagement for ${client.name}`,
+      consultantName: consultant.name,
+      consultantEmail: consultant.email,
+      timezone: engagement.settings.timezone,
+      startDate: engagement.startDate instanceof Date
+        ? engagement.startDate.toISOString().split("T")[0]!
+        : String(engagement.startDate).split("T")[0]!,
+    };
+  }, [activeEngagementId, consultant, engagements, clients]);
+
   const handleCreateEngagement = async () => {
     if (!clientName || !clientDomain || !consultant) return;
-    const slug = clientDomain.replace(/\./g, "-").toLowerCase();
-    const home = await homeDir();
-    const clientId = await createClient({
-      name: clientName,
-      domain: clientDomain,
-      slug,
-      branding: {},
-    });
-    const engId = await createEngagement({
-      consultantId: consultant.id,
-      clientId,
-      status: "active",
-      startDate: new Date(),
-      settings: { timezone: consultant.preferences.timezone },
-      vault: {
-        path: `${home}.ikrs-workspace/vaults/${slug}/`,
+    setCreating(true);
+
+    try {
+      const slug = clientDomain.replace(/\./g, "-").toLowerCase();
+      const home = await homeDir();
+      const vaultPath = `${home}.ikrs-workspace/vaults/${slug}/`;
+
+      const clientId = await createClient({
+        name: clientName,
+        domain: clientDomain,
+        slug,
+        branding: {},
+      });
+
+      const engId = await createEngagement({
+        consultantId: consultant.id,
+        clientId,
         status: "active",
-      },
-    });
-    useEngagementStore.getState().setActiveEngagement(engId);
-    setClientName("");
-    setClientDomain("");
+        startDate: new Date(),
+        settings: {
+          timezone: consultant.preferences.timezone,
+          description: engagementDesc || undefined,
+        },
+        vault: {
+          path: vaultPath,
+          status: "active",
+        },
+      });
+
+      // Scaffold skill folders on disk (Phase 2)
+      await scaffoldEngagementSkills({
+        engagementPath: vaultPath,
+        clientName,
+        clientSlug: slug,
+        engagementTitle: engagementTitle || `${clientName} Engagement`,
+        engagementDescription: engagementDesc || `Engagement for ${clientName}`,
+        consultantName: consultant.name,
+        consultantEmail: consultant.email,
+        timezone: consultant.preferences.timezone,
+      });
+
+      useEngagementStore.getState().setActiveEngagement(engId);
+      setClientName("");
+      setClientDomain("");
+      setEngagementTitle("");
+      setEngagementDesc("");
+    } catch (err) {
+      console.error("Failed to create engagement:", err);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleConnectGoogle = async () => {
@@ -112,11 +170,21 @@ export default function SettingsView() {
             value={clientDomain}
             onChange={(e) => setClientDomain(e.target.value)}
           />
+          <Input
+            placeholder="Engagement title (e.g. Annual Gala 2026)"
+            value={engagementTitle}
+            onChange={(e) => setEngagementTitle(e.target.value)}
+          />
+          <Input
+            placeholder="Description (optional)"
+            value={engagementDesc}
+            onChange={(e) => setEngagementDesc(e.target.value)}
+          />
           <Button
             onClick={handleCreateEngagement}
-            disabled={!clientName || !clientDomain}
+            disabled={!clientName || !clientDomain || creating}
           >
-            Create engagement
+            {creating ? "Creating..." : "Create engagement"}
           </Button>
         </CardContent>
       </Card>
@@ -154,6 +222,10 @@ export default function SettingsView() {
           )}
         </CardContent>
       </Card>
+
+      {activeEngagementId && (
+        <SkillStatusPanel updateParams={skillUpdateParams} />
+      )}
     </div>
   );
 }

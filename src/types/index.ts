@@ -105,3 +105,12 @@ export interface McpHealth {
 }
 
 export type { ChatMessage, ToolActivity, ClaudeSessionStatus, AuthStatus, VersionCheck } from "./claude";
+
+export type {
+  SkillUpdateStatus,
+  SkillDomain,
+  SkillFolderInfo,
+  ScaffoldSkillsParams,
+  SkillUpdateParams,
+} from "./skills";
+export { SKILL_DOMAINS, isSkillDomain } from "./skills";
