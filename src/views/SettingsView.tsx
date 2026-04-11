@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,7 @@ export default function SettingsView() {
   const handleCreateEngagement = async () => {
     if (!clientName || !clientDomain || !consultant) return;
     const slug = clientDomain.replace(/\./g, "-").toLowerCase();
+    const home = await homeDir();
     const clientId = await createClient({
       name: clientName,
       domain: clientDomain,
@@ -46,7 +48,7 @@ export default function SettingsView() {
       startDate: new Date(),
       settings: { timezone: consultant.preferences.timezone },
       vault: {
-        path: `~/.ikrs-workspace/vaults/${slug}/`,
+        path: `${home}.ikrs-workspace/vaults/${slug}/`,
         status: "active",
       },
     });
