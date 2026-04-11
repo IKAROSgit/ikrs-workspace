@@ -52,7 +52,7 @@ export default function ChatView() {
     }
     if (!version.meets_minimum) {
       useClaudeStore.getState().setError(
-        `Claude CLI ${version.version} is too old. Please update to ${version.version} or later.`
+        `Claude CLI ${version.version} is too old. Please update to v2.1.0 or later.`
       );
       return;
     }

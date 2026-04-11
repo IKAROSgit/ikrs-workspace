@@ -43,8 +43,8 @@ fn summarize_tool_result(content: &Option<serde_json::Value>, is_error: bool) ->
     }
     match content {
         Some(serde_json::Value::String(s)) => {
-            if s.len() > 80 {
-                format!("{}...", &s[..77])
+            if s.chars().count() > 80 {
+                format!("{}...", s.chars().take(77).collect::<String>())
             } else {
                 s.clone()
             }
