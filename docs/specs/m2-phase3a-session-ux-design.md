@@ -27,10 +27,10 @@ Phase 3b (MCP wiring + resilience) follows as a separate phase.
 ### Out of Scope (Phase 3b)
 
 - Per-engagement `.mcp-config.json` and `--mcp-config` flag
-- Retiring `McpProcessManager` / app-side MCP spawning
+- Retiring `McpProcessManager` / app-side MCP spawning (including full module removal)
 - Gmail/Calendar/Drive MCP wiring
+- Obsidian MCP ownership transfer to Claude CLI via `.mcp-config.json` (A2 — tracked for 3b)
 - Offline detection and retry UX
-- `McpProcessManager` removal (deferred to 3b)
 
 ### Out of Scope (Phase 4)
 
@@ -51,23 +51,44 @@ Phase 3b (MCP wiring + resilience) follows as a separate phase.
 
 ### Solution
 
-After detecting process exit in `monitor_process`, remove the session from the HashMap before emitting the event. The `ClaudeSessionManager` needs to be passed into the monitor task so it can clean up.
+After detecting process exit in `monitor_process`, remove the session from the HashMap before emitting the event.
 
+> **W2 (Codex):** `monitor_process` is currently a free function with signature `(Child, String, AppHandle)`. It has no access to the sessions HashMap. The fix requires threading an `Arc<Mutex<HashMap>>` clone into the monitor task.
+
+**Concrete changes in `session_manager.rs`:**
+
+1. Change `monitor_process` signature:
 ```rust
-// In monitor_process, after detecting exit:
+async fn monitor_process(
+    mut child: Child,
+    session_id: String,
+    sessions: Arc<Mutex<HashMap<String, ClaudeSession>>>,  // NEW
+    app: AppHandle,
+)
+```
+
+2. At the spawn site (currently line ~114), clone the Arc before spawning the monitor:
+```rust
+let sessions_clone = Arc::clone(&self.sessions);
+tokio::spawn(monitor_process(child, session_id.clone(), sessions_clone, app.clone()));
+```
+
+3. In monitor_process, after detecting exit:
+```rust
+// Remove dead session from map BEFORE emitting event
 {
-    let mut sessions = manager.sessions.lock().await;
+    let mut sessions = sessions.lock().await;
     sessions.remove(&session_id);
 }
 // THEN emit the event
 let _ = app.emit("claude:session-ended", payload);
 ```
 
-The `kill()` method already removes from the HashMap synchronously (line 162-169). The fix is making `monitor_process` do the same.
+The `kill()` method already removes from the HashMap synchronously. This fix makes `monitor_process` do the same for crash/normal exit paths.
 
 ### Files Changed
 
-- `src-tauri/src/claude/session_manager.rs` — pass manager Arc into monitor, remove session on exit
+- `src-tauri/src/claude/session_manager.rs` — change monitor_process signature, clone Arc at spawn site, remove session on exit
 
 ---
 
@@ -186,7 +207,9 @@ New `SessionDetailsModal.tsx`:
 
 ### Solution
 
-Add an in-memory `Map<string, ChatMessage[]>` to claudeStore for history partitioning.
+Add an in-memory `Record<string, ChatMessage[]>` to claudeStore for history partitioning.
+
+> **W1 (Codex):** Must use `Record` (plain object), not `Map`. Zustand v5 uses `Object.is()` shallow equality — mutating a Map in-place does not change the reference, causing zero re-renders. Plain objects with spread (`{ ...state.historyCache, [id]: messages }`) work correctly.
 
 ```typescript
 interface ClaudeState {
@@ -196,7 +219,7 @@ interface ClaudeState {
 
   // NEW
   engagementId: string | null;
-  historyCache: Map<string, ChatMessage[]>;  // engagement_id → messages
+  historyCache: Record<string, ChatMessage[]>;  // engagement_id → messages
 
   // NEW actions
   saveAndClearHistory: (engagementId: string) => void;
@@ -205,14 +228,15 @@ interface ClaudeState {
 ```
 
 **`saveAndClearHistory(engagementId)`:**
-1. Copy current `messages` into `historyCache.get(engagementId)`
+1. Copy current `messages` into `historyCache[engagementId]` via spread
 2. Apply FIFO cap: keep last 50 messages
 3. Clear `messages` to empty array
-4. Set `engagementId` to null
+4. Clear `activeTools` to empty array (W6: prevent stale tool cards in new session)
+5. Set `engagementId` to null
 
 **`loadHistory(engagementId)`:**
 1. Set `engagementId`
-2. Set `messages` to `historyCache.get(engagementId) ?? []`
+2. Set `messages` to `historyCache[engagementId] ?? []`
 
 **FIFO cap:** 50 messages per engagement. When adding message 51, remove message 1. Applied on save, not on add (to avoid mid-conversation truncation).
 
@@ -273,24 +297,41 @@ pub async fn spawn_claude_session(
 
 If `resume_session_id` is `Some(id)`:
 1. Add `--resume {id}` to CLI args
-2. Spawn with 5-second timeout for session-ready event
-3. If timeout or error: kill process, retry without `--resume` (new session)
-4. Log resume failure but don't surface to user (seamless fallback)
+2. Spawn process and return immediately (same as normal spawn)
+
+> **W3 (Codex):** The Rust spawn function returns immediately after starting the child process. The `session-ready` event arrives asynchronously via the stream parser in a separate tokio task. There is no mechanism for the Rust spawn to "wait" for session-ready. The 5-second resume timeout is therefore **frontend-driven in `useWorkspaceSession`**: after calling `spawnClaudeSession()`, start a 5s timer watching `claudeStore.status`. If it does not become `connected` within 5s, kill the session and retry without `--resume`.
 
 On successful spawn: write to registry via `register_session()`.
 On session end (normal or crash): clear via `unregister_session()`.
 
-### Frontend
+### Frontend IPC
 
-`useWorkspaceSession` (item 6) handles the resume logic. The IPC layer just accepts the optional param.
+> **W4 (Codex):** `getResumeSessionId` must be defined as a Tauri IPC command.
+
+New Tauri command:
+```rust
+#[tauri::command]
+pub async fn get_resume_session_id(
+    engagement_id: String,
+    app: AppHandle,
+) -> Result<Option<String>, String>
+```
+
+TypeScript wrapper in `tauri-commands.ts`:
+```typescript
+export async function getResumeSessionId(engagementId: string): Promise<string | null> {
+  return invoke<string | null>("get_resume_session_id", { engagementId });
+}
+```
 
 ### Files Changed
 
 - `src-tauri/src/claude/session_manager.rs` — accept resume param, add --resume flag
 - `src-tauri/src/claude/registry.rs` — NEW: JSON registry CRUD
 - `src-tauri/src/claude/mod.rs` — export registry
-- `src-tauri/src/claude/commands.rs` — pass resume_session_id through IPC
-- `src/lib/tauri-commands.ts` — update spawnClaudeSession signature
+- `src-tauri/src/claude/commands.rs` — pass resume_session_id through IPC, add get_resume_session_id command
+- `src-tauri/src/lib.rs` — register get_resume_session_id in invoke_handler
+- `src/lib/tauri-commands.ts` — update spawnClaudeSession signature, add getResumeSessionId
 
 ---
 
@@ -347,13 +388,41 @@ function useWorkspaceSession() {
           engagement.vault.path,
           resumeId ?? undefined,
         );
+
+        // W3: Frontend-driven resume timeout (5s)
+        if (resumeId) {
+          const connected = await waitForStatus("connected", 5000);
+          if (!connected) {
+            // Resume failed — kill and retry without --resume
+            await killClaudeSession(claudeStore.getState().sessionId!);
+            await spawnClaudeSession(newEngagementId, engagement.vault.path);
+          }
+        }
       }
     } finally {
       setSwitching(false);
     }
   }
 
-  return { switchEngagement, switching, sessionStatus };
+  return { switchEngagement, switching };
+}
+```
+
+### `waitForStatus` Helper
+
+Polls `claudeStore.status` via `subscribe()` with a timeout:
+```typescript
+function waitForStatus(target: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { unsub(); resolve(false); }, timeoutMs);
+    const unsub = useClaudeStore.subscribe((state) => {
+      if (state.status === target) {
+        clearTimeout(timer);
+        unsub();
+        resolve(true);
+      }
+    });
+  });
 }
 ```
 
@@ -378,7 +447,7 @@ function useWorkspaceSession() {
 - `src/views/ChatView.tsx` — use `useWorkspaceSession` instead of direct spawn/kill
 - `src/components/chat/SessionIndicator.tsx` — show switching state
 - `src/components/chat/InputBar.tsx` — disable during switching
-- Components that import `useEngagement` for switching → import `useWorkspaceSession`
+- `src/components/EngagementSwitcher.tsx` — import `useWorkspaceSession` instead of `useEngagement` for switching (W5)
 
 ---
 
@@ -392,15 +461,27 @@ If the app crashes or is force-quit, Claude CLI child processes become orphans. 
 
 Uses the same JSON registry from item 5.
 
-On app startup (`setup()` in `lib.rs`):
+On app startup, in the Tauri builder chain:
+
+> **IMPORTANT-3 (Codex):** The current `lib.rs` has no `.setup()` callback. Add one to the builder chain before `.invoke_handler()`.
+
+```rust
+// In lib.rs builder chain:
+.setup(|app| {
+    let app_data_dir = app.path().app_data_dir().expect("No app data dir");
+    cleanup_orphans(&app_data_dir);
+    Ok(())
+})
+```
+
+**Cleanup logic:**
 
 ```rust
 fn cleanup_orphans(app_data_dir: &Path) {
     let registry = load_registry(app_data_dir);
-    for (engagement_id, entry) in &registry.sessions {
+    for (_engagement_id, entry) in &registry.sessions {
         if is_process_alive(entry.pid) && is_claude_process(entry.pid) {
-            // Send SIGTERM
-            unsafe { libc::kill(entry.pid as i32, libc::SIGTERM); }
+            kill_process(entry.pid);
         }
     }
     // Clear all entries (fresh start)
@@ -408,15 +489,34 @@ fn cleanup_orphans(app_data_dir: &Path) {
 }
 ```
 
-**Process name verification:** Before sending SIGTERM, check that the process with the stored PID is actually a Claude process (not a reused PID). On Linux: read `/proc/{pid}/cmdline` and check for "claude". On macOS: use `sysctl` or `proc_pidpath`.
+> **IMPORTANT-4 (Codex):** Use `std::process::Command` with `ps` — no new dependency needed. Works on both macOS and Linux.
 
-**Cross-platform:** Use `sysinfo` crate (already common in Tauri apps) for process info, or `std::process::Command` with `ps -p {pid} -o comm=`.
+**Process verification and kill (cross-platform, no `libc` dependency):**
+
+```rust
+fn is_claude_process(pid: u32) -> bool {
+    // Works on macOS and Linux
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output();
+    match output {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).contains("claude"),
+        Err(_) => false,
+    }
+}
+
+fn kill_process(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .output();
+}
+```
 
 ### Files Changed
 
-- `src-tauri/src/claude/registry.rs` — add `cleanup_orphans()` and `is_claude_process()`
-- `src-tauri/src/lib.rs` — call `cleanup_orphans()` in `setup()`
-- `Cargo.toml` — add `sysinfo` or `libc` dependency if needed
+- `src-tauri/src/claude/registry.rs` — add `cleanup_orphans()`, `is_claude_process()`, `kill_process()`
+- `src-tauri/src/lib.rs` — add `.setup()` callback calling `cleanup_orphans()`
+- No new Cargo dependencies needed
 
 ---
 
