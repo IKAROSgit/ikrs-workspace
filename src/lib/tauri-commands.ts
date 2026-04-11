@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AuthStatus, VersionCheck } from "@/types/claude";
 
 export async function storeCredential(key: string, value: string): Promise<void> {
   return invoke("store_credential", { key, value });
@@ -101,22 +102,34 @@ export async function deleteVault(clientSlug: string): Promise<void> {
   return invoke("delete_vault", { clientSlug });
 }
 
-// Claude Code
-export async function claudePreflight(): Promise<boolean> {
-  return invoke("claude_preflight");
+// Claude M2 — Embedded Subprocess
+
+export async function claudeVersionCheck(): Promise<VersionCheck> {
+  return invoke("claude_version_check");
 }
 
-export async function scaffoldClaudeProject(params: {
-  clientSlug: string;
-  clientName: string;
-  accountEmail: string;
-  vaultPath: string;
-  timezone: string;
-  description: string;
-}): Promise<string> {
-  return invoke("scaffold_claude_project", params);
+export async function claudeAuthStatus(): Promise<AuthStatus> {
+  return invoke("claude_auth_status");
 }
 
-export async function launchClaude(projectPath: string, terminal: string): Promise<number> {
-  return invoke("launch_claude", { projectPath, terminal });
+export async function claudeAuthLogin(): Promise<void> {
+  return invoke("claude_auth_login");
+}
+
+export async function spawnClaudeSession(
+  engagementId: string,
+  engagementPath: string,
+): Promise<string> {
+  return invoke("spawn_claude_session", { engagementId, engagementPath });
+}
+
+export async function sendClaudeMessage(
+  sessionId: string,
+  message: string,
+): Promise<void> {
+  return invoke("send_claude_message", { sessionId, message });
+}
+
+export async function killClaudeSession(sessionId: string): Promise<void> {
+  return invoke("kill_claude_session", { sessionId });
 }

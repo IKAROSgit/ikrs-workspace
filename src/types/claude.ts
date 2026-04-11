@@ -1,0 +1,76 @@
+export type ClaudeSessionStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "thinking"
+  | "error";
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  timestamp: Date;
+  isStreaming: boolean;
+}
+
+export interface ToolActivity {
+  toolId: string;
+  toolName: string;
+  friendlyLabel: string;
+  status: "running" | "success" | "error";
+  summary?: string;
+  startedAt: Date;
+  completedAt?: Date;
+}
+
+export interface SessionReadyPayload {
+  session_id: string;
+  tools: string[];
+  model: string;
+  cwd: string;
+}
+
+export interface TextDeltaPayload {
+  text: string;
+  message_id: string;
+}
+
+export interface ToolStartPayload {
+  tool_id: string;
+  tool_name: string;
+  friendly_label: string;
+}
+
+export interface ToolEndPayload {
+  tool_id: string;
+  success: boolean;
+  summary: string;
+}
+
+export interface TurnCompletePayload {
+  session_id: string;
+  cost_usd: number;
+  duration_ms: number;
+}
+
+export interface ErrorPayload {
+  message: string;
+}
+
+export interface SessionEndPayload {
+  session_id: string;
+  exit_code: number | null;
+  reason: string;
+}
+
+export interface AuthStatus {
+  loggedIn: boolean;
+  authMethod: string | null;
+  apiProvider: string | null;
+}
+
+export interface VersionCheck {
+  installed: boolean;
+  version: string | null;
+  meets_minimum: boolean;
+}

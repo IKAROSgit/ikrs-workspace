@@ -104,9 +104,4 @@ export interface McpHealth {
   restartCount: number;
 }
 
-export interface ClaudeSession {
-  engagementId: string;
-  pid: number;
-  startedAt: Date;
-  projectPath: string;
-}
+export type { ChatMessage, ToolActivity, ClaudeSessionStatus, AuthStatus, VersionCheck } from "./claude";

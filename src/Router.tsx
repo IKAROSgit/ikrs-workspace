@@ -6,7 +6,7 @@ const CalendarView = lazy(() => import("@/views/CalendarView"));
 const FilesView = lazy(() => import("@/views/FilesView"));
 const TasksView = lazy(() => import("@/views/TasksView"));
 const NotesView = lazy(() => import("@/views/NotesView"));
-const ClaudeView = lazy(() => import("@/views/ClaudeView"));
+const ChatView = lazy(() => import("@/views/ChatView"));
 const SettingsView = lazy(() => import("@/views/SettingsView"));
 
 export type ViewId = "inbox" | "calendar" | "files" | "tasks" | "notes" | "claude" | "settings";
@@ -17,7 +17,7 @@ const VIEW_MAP: Record<ViewId, { component: React.LazyExoticComponent<() => Reac
   files: { component: FilesView, label: "Files" },
   tasks: { component: TasksView, label: "Tasks" },
   notes: { component: NotesView, label: "Notes" },
-  claude: { component: ClaudeView, label: "Claude Code" },
+  claude: { component: ChatView, label: "Claude" },
   settings: { component: SettingsView, label: "Settings" },
 };
 

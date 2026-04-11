@@ -1,7 +1,9 @@
+mod claude;
 mod commands;
 mod mcp;
 mod oauth;
 
+use claude::ClaudeSessionManager;
 use mcp::manager::McpProcessManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_keyring::init())
         .manage(commands::oauth::OAuthState::default())
         .manage(McpProcessManager::new())
+        .manage(ClaudeSessionManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::credentials::store_credential,
             commands::credentials::get_credential,
@@ -32,9 +35,13 @@ pub fn run() {
             commands::vault::archive_vault,
             commands::vault::restore_vault,
             commands::vault::delete_vault,
-            commands::claude::claude_preflight,
-            commands::claude::scaffold_claude_project,
-            commands::claude::launch_claude,
+            // Claude M2 — embedded subprocess
+            claude::auth::claude_version_check,
+            claude::auth::claude_auth_status,
+            claude::auth::claude_auth_login,
+            claude::commands::spawn_claude_session,
+            claude::commands::send_claude_message,
+            claude::commands::kill_claude_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
