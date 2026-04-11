@@ -1,4 +1,5 @@
 mod commands;
+mod oauth;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,10 +12,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_keyring::init())
+        .manage(commands::oauth::OAuthState::default())
         .invoke_handler(tauri::generate_handler![
             commands::credentials::store_credential,
             commands::credentials::get_credential,
             commands::credentials::delete_credential,
+            commands::oauth::start_oauth,
+            commands::oauth::exchange_oauth_code,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
