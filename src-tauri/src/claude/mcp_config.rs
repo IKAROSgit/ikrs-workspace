@@ -24,14 +24,19 @@ pub fn generate_mcp_config(
     engagement_path: &Path,
     has_google_token: bool,
     vault_path: Option<&Path>,
+    npx_path: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    let npx_command = npx_path
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "npx".to_string());
+
     let mut servers = HashMap::new();
 
     if has_google_token {
         servers.insert(
             "gmail".to_string(),
             McpServerEntry {
-                command: "npx".to_string(),
+                command: npx_command.clone(),
                 args: vec!["@shinzolabs/gmail-mcp@1.7.4".to_string()],
                 env: HashMap::from([(
                     "GOOGLE_ACCESS_TOKEN".to_string(),
@@ -42,7 +47,7 @@ pub fn generate_mcp_config(
         servers.insert(
             "calendar".to_string(),
             McpServerEntry {
-                command: "npx".to_string(),
+                command: npx_command.clone(),
                 args: vec!["@cocal/google-calendar-mcp@2.6.1".to_string()],
                 env: HashMap::from([(
                     "GOOGLE_ACCESS_TOKEN".to_string(),
@@ -53,7 +58,7 @@ pub fn generate_mcp_config(
         servers.insert(
             "drive".to_string(),
             McpServerEntry {
-                command: "npx".to_string(),
+                command: npx_command.clone(),
                 args: vec!["@piotr-agier/google-drive-mcp@2.0.2".to_string()],
                 env: HashMap::from([(
                     "GOOGLE_ACCESS_TOKEN".to_string(),
@@ -68,7 +73,7 @@ pub fn generate_mcp_config(
             servers.insert(
                 "obsidian".to_string(),
                 McpServerEntry {
-                    command: "npx".to_string(),
+                    command: npx_command.clone(),
                     args: vec![
                         "@bitbonsai/mcpvault@1.3.0".to_string(),
                         vp.to_string_lossy().to_string(),
@@ -108,7 +113,7 @@ mod tests {
         let vault = dir.path().join("vault");
         fs::create_dir(&vault).unwrap();
 
-        let result = generate_mcp_config(dir.path(), true, Some(&vault));
+        let result = generate_mcp_config(dir.path(), true, Some(&vault), None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();
@@ -128,7 +133,7 @@ mod tests {
         let vault = dir.path().join("vault");
         fs::create_dir(&vault).unwrap();
 
-        let result = generate_mcp_config(dir.path(), false, Some(&vault));
+        let result = generate_mcp_config(dir.path(), false, Some(&vault), None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();
@@ -145,7 +150,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let nonexistent = dir.path().join("missing_vault");
 
-        let result = generate_mcp_config(dir.path(), true, Some(&nonexistent));
+        let result = generate_mcp_config(dir.path(), true, Some(&nonexistent), None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();
@@ -161,7 +166,7 @@ mod tests {
     fn test_generate_config_empty() {
         let dir = TempDir::new().unwrap();
 
-        let result = generate_mcp_config(dir.path(), false, None);
+        let result = generate_mcp_config(dir.path(), false, None, None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();

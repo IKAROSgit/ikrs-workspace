@@ -81,10 +81,20 @@ impl ClaudeSessionManager {
             args.push(config_path.clone());
         }
 
+        // Resolve claude binary path from app state (resolved at startup)
+        let resolved: tauri::State<'_, crate::claude::binary_resolver::ResolvedBinaries> =
+            app.state();
+        let claude_path = resolved
+            .claude
+            .as_ref()
+            .ok_or("Claude CLI not found. Please install Claude Code (https://claude.ai/code).")?;
+
         // Note: .envs() is additive — it adds to the inherited environment, not replaces it.
-        let mut child = Command::new("claude")
+        // PATH is injected before envs so child processes can find npx/node under sandbox.
+        let mut child = Command::new(claude_path)
             .args(&args)
             .current_dir(&engagement_path)
+            .env("PATH", resolved.to_path_env())
             .envs(&env_vars)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

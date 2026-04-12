@@ -45,12 +45,15 @@ pub async fn spawn_claude_session(
             }
         }
 
-        // 3. Generate MCP config
+        // 3. Generate MCP config (with resolved npx path for sandbox compatibility)
+        let resolved: tauri::State<'_, crate::claude::binary_resolver::ResolvedBinaries> =
+            app.state();
         let engagement_dir = std::path::Path::new(&engagement_path);
         let config_path = crate::claude::mcp_config::generate_mcp_config(
             engagement_dir,
             has_token,
             Some(&vault_path),
+            resolved.npx.as_deref(),
         )?;
         mcp_config_path = Some(config_path.to_string_lossy().to_string());
     }

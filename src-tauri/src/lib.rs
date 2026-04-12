@@ -55,6 +55,17 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("No app data dir");
             migrate_app_data(&app_data_dir);
+
+            // Resolve binary paths at startup (before sandbox restrictions)
+            let resolved = claude::binary_resolver::resolve_binaries();
+            if resolved.claude.is_none() {
+                log::warn!("Claude CLI not found — sessions will fail to spawn");
+            }
+            if resolved.npx.is_none() {
+                log::warn!("npx not found — MCP servers will be unavailable");
+            }
+            app.manage(resolved);
+
             claude::registry::cleanup_orphans(&app_data_dir);
             Ok(())
         })
