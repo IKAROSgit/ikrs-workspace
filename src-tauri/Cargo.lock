@@ -2162,6 +2162,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-sql",
+ "tempfile",
  "tokio",
  "urlencoding",
  "uuid",

@@ -37,3 +37,6 @@ dirs = "6"
 chrono = "0.4"
 flate2 = "1"
 tar = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
