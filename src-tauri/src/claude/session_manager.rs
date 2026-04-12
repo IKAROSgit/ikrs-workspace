@@ -33,6 +33,8 @@ impl ClaudeSessionManager {
         engagement_id: String,
         engagement_path: String,
         resume_session_id: Option<String>,
+        env_vars: HashMap<String, String>,
+        mcp_config_path: Option<String>,
         app: AppHandle,
     ) -> Result<(String, u32), String> {
         // Enforce max sessions — kill existing if at limit
@@ -74,9 +76,16 @@ impl ClaudeSessionManager {
             args.push(resume_id.clone());
         }
 
+        if let Some(ref config_path) = mcp_config_path {
+            args.push("--mcp-config".to_string());
+            args.push(config_path.clone());
+        }
+
+        // Note: .envs() is additive — it adds to the inherited environment, not replaces it.
         let mut child = Command::new("claude")
             .args(&args)
             .current_dir(&engagement_path)
+            .envs(&env_vars)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

@@ -10,7 +10,14 @@ pub async fn spawn_claude_session(
     app: AppHandle,
 ) -> Result<String, String> {
     let (session_id, child_pid) = state
-        .spawn(engagement_id.clone(), engagement_path, resume_session_id, app.clone())
+        .spawn(
+            engagement_id.clone(),
+            engagement_path,
+            resume_session_id,
+            std::collections::HashMap::new(),
+            None,
+            app.clone(),
+        )
         .await?;
 
     // Register in session registry for resume + orphan cleanup
