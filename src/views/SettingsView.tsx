@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { homeDir } from "@tauri-apps/api/path";
-import { open } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,7 +143,7 @@ export default function SettingsView() {
         OAUTH_PORT,
         GOOGLE_SCOPES,
       );
-      await open(auth_url);
+      await openUrl(auth_url);
 
       const success = await tokenPromise;
       setOauthStatus(success ? "success" : "error");

@@ -18,32 +18,6 @@ export function makeKeychainKey(engagementId: string, provider: string): string 
 }
 
 // OAuth
-export interface OAuthStartResult {
-  auth_url: string;
-}
-
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string | null;
-  expires_in: number;
-}
-
-export async function startOAuth(
-  clientId: string,
-  redirectPort: number,
-  scopes: string[],
-): Promise<OAuthStartResult> {
-  return invoke("start_oauth", { clientId, redirectPort, scopes });
-}
-
-export async function exchangeOAuthCode(
-  code: string,
-  clientId: string,
-  redirectPort: number,
-): Promise<TokenResponse> {
-  return invoke("exchange_oauth_code", { code, clientId, redirectPort });
-}
-
 export interface OAuthFlowResult {
   auth_url: string;
   actual_port: number;
