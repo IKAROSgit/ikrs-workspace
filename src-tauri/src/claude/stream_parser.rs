@@ -106,6 +106,7 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
     let mut lines = reader.lines();
     let mut msg_id_gen = MessageIdGen::new();
     let mut current_msg_id = msg_id_gen.next();
+    let mut tool_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     loop {
         match lines.next_line().await {
@@ -113,7 +114,7 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
                 if line.trim().is_empty() {
                     continue;
                 }
-                handle_line(&line, &app, &mut msg_id_gen, &mut current_msg_id);
+                handle_line(&line, &app, &mut msg_id_gen, &mut current_msg_id, &mut tool_name_map);
             }
             Ok(None) => {
                 // EOF — process exited or pipe closed
@@ -138,6 +139,7 @@ fn handle_line(
     app: &AppHandle,
     msg_id_gen: &mut MessageIdGen,
     current_msg_id: &mut String,
+    tool_name_map: &mut std::collections::HashMap<String, String>,
 ) {
     // First try to determine the type field without full deserialization
     let raw: serde_json::Value = match serde_json::from_str(line) {
@@ -152,8 +154,8 @@ fn handle_line(
 
     match event_type {
         "system" => handle_system_event(&raw, app),
-        "assistant" => handle_assistant_event(&raw, app, msg_id_gen, current_msg_id),
-        "user" => handle_user_event(&raw, app),
+        "assistant" => handle_assistant_event(&raw, app, msg_id_gen, current_msg_id, tool_name_map),
+        "user" => handle_user_event(&raw, app, tool_name_map),
         "result" => handle_result_event(&raw, app),
         "rate_limit_event" => { /* silently drop — internal bookkeeping */ }
         _ => {
@@ -199,6 +201,7 @@ fn handle_assistant_event(
     app: &AppHandle,
     msg_id_gen: &mut MessageIdGen,
     current_msg_id: &mut String,
+    tool_name_map: &mut std::collections::HashMap<String, String>,
 ) {
     let content = match raw["message"]["content"].as_array() {
         Some(arr) => arr,
@@ -232,6 +235,7 @@ fn handle_assistant_event(
                         tool_input: serialize_tool_input(input),
                     },
                 );
+                tool_name_map.insert(tool_id.to_string(), tool_name.to_string());
             }
             "thinking" => {
                 // Filtered — internal reasoning not shown to consultant
@@ -252,7 +256,7 @@ fn handle_assistant_event(
     }
 }
 
-fn handle_user_event(raw: &serde_json::Value, app: &AppHandle) {
+fn handle_user_event(raw: &serde_json::Value, app: &AppHandle, tool_name_map: &std::collections::HashMap<String, String>) {
     // User events contain tool_result content blocks
     let content = match raw["message"]["content"].as_array() {
         Some(arr) => arr,
@@ -282,7 +286,8 @@ fn handle_user_event(raw: &serde_json::Value, app: &AppHandle) {
                         other => serde_json::to_string(other).unwrap_or_default(),
                     };
                     if is_auth_error(&content_str) {
-                        let server = infer_mcp_server(tool_id);
+                        let resolved_name = tool_name_map.get(tool_id).map(|s| s.as_str()).unwrap_or("");
+                        let server = infer_mcp_server(resolved_name);
                         let _ = app.emit(
                             "claude:mcp-auth-error",
                             McpAuthErrorPayload {
@@ -308,19 +313,19 @@ fn is_auth_error(content: &str) -> bool {
         || lower.contains("unauthenticated")
 }
 
-/// Infer which MCP server a tool belongs to from the tool_id.
-/// MCP tools are typically prefixed: mcp__gmail__*, mcp__calendar__*, etc.
-fn infer_mcp_server(tool_id: &str) -> String {
-    if tool_id.contains("gmail") {
+/// Infer which MCP server a tool belongs to from the tool_name.
+/// MCP tools are prefixed: mcp__gmail__*, mcp__calendar__*, etc.
+fn infer_mcp_server(tool_name: &str) -> String {
+    if tool_name.starts_with("mcp__gmail__") {
         return "gmail".to_string();
     }
-    if tool_id.contains("calendar") {
+    if tool_name.starts_with("mcp__calendar__") {
         return "calendar".to_string();
     }
-    if tool_id.contains("drive") {
+    if tool_name.starts_with("mcp__drive__") {
         return "drive".to_string();
     }
-    if tool_id.contains("obsidian") {
+    if tool_name.starts_with("mcp__obsidian__") {
         return "obsidian".to_string();
     }
     "unknown".to_string()
@@ -426,6 +431,6 @@ mod tests {
 
     #[test]
     fn test_infer_mcp_server_unknown() {
-        assert_eq!(infer_mcp_server("toolu_abc123"), "unknown");
+        assert_eq!(infer_mcp_server("Read"), "unknown");
     }
 }
