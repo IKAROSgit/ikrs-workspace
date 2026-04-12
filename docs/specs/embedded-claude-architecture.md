@@ -992,6 +992,6 @@ These were originally open questions, now resolved with design decisions:
 |---|----------|------------|-------------|
 | Q1 | Permission prompts in headless mode | Use `--permission-mode default` with UI approval flow. Fallback to `acceptEdits` if stream-json doesn't surface prompts. | 3.5 |
 | Q2 | Session persistence in `~/.claude/` | Accepted. Documented as known external data location. May contain conversation transcripts. | Risk R7 |
-| Q3 | MCP servers per-engagement | Yes — Phase 3. Use `--mcp-config` with per-engagement config file generated at scaffold time. | Phase 3 |
+| Q3 | MCP servers per-engagement | Yes — Phase 3. Use `--mcp-config` with per-engagement config file generated at session spawn time (not scaffold time — token availability changes between scaffold and spawn). | Phase 3 |
 | Q4 | Concurrent sessions | One at a time for M2. `ClaudeSessionManager` enforces `max_sessions=1`. HashMap is forward-compatible. | 3.9 |
 | Q5 | Offline behavior | Graceful degradation. Files work offline. Chat requires internet. Clear error states. | 3.15 |
