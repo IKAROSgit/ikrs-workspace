@@ -38,7 +38,9 @@ pub async fn spawn_claude_session(
             .join("vaults")
             .join(slug);
         if !vault_path.exists() {
-            let _ = std::fs::create_dir_all(&vault_path);
+            if let Err(e) = std::fs::create_dir_all(&vault_path) {
+                log::warn!("Failed to create vault dir {}: {e}", vault_path.display());
+            }
         }
 
         // 3. Generate MCP config
