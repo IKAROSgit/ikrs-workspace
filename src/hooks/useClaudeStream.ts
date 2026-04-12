@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useClaudeStore } from "@/stores/claudeStore";
+import { useMcpStore } from "@/stores/mcpStore";
+import { extractMcpServers } from "@/lib/mcp-utils";
 import type {
   SessionReadyPayload,
   TextDeltaPayload,
@@ -30,6 +32,8 @@ export function useClaudeStream(): void {
             event.payload.tools,
             event.payload.model
           );
+          const mcpServers = extractMcpServers(event.payload.tools);
+          useMcpStore.getState().setServers(mcpServers);
         })
       );
 
@@ -82,6 +86,7 @@ export function useClaudeStream(): void {
       unlisteners.push(
         await listen<SessionEndPayload>("claude:session-ended", (event) => {
           store().setDisconnected(event.payload.reason);
+          useMcpStore.getState().setServers([]);
         })
       );
 
