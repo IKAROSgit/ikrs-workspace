@@ -98,7 +98,8 @@ impl ClaudeSessionManager {
         } else if existing_path.is_empty() {
             resolved_path
         } else {
-            format!("{resolved_path}:{existing_path}")
+            let sep = if cfg!(target_family = "windows") { ";" } else { ":" };
+            format!("{resolved_path}{sep}{existing_path}")
         };
 
         // Note: .envs() is additive — it adds to the inherited environment, not replaces it.
