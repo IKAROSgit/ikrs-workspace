@@ -8,6 +8,7 @@ interface ClaudeState {
   activeTools: ToolActivity[];
   totalCostUsd: number;
   error: string | null;
+  authError: { server: string; hint: string } | null;
   availableTools: string[];
   model: string | null;
   sessionStartedAt: number | null;
@@ -21,6 +22,8 @@ interface ClaudeState {
   endTool: (toolId: string, success: boolean, summary: string, resultContent?: string) => void;
   completeTurn: (costUsd: number, durationMs: number) => void;
   setError: (message: string) => void;
+  setAuthError: (server: string, hint: string) => void;
+  clearAuthError: () => void;
   setDisconnected: (reason: string) => void;
   saveAndClearHistory: (engagementId: string) => void;
   loadHistory: (engagementId: string) => void;
@@ -34,6 +37,7 @@ const initialState = {
   activeTools: [] as ToolActivity[],
   totalCostUsd: 0,
   error: null as string | null,
+  authError: null as { server: string; hint: string } | null,
   availableTools: [] as string[],
   model: null as string | null,
   sessionStartedAt: null as number | null,
@@ -141,6 +145,12 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
       status: "error",
       error: message,
     }),
+
+  setAuthError: (server, hint) =>
+    set({ authError: { server, hint } }),
+
+  clearAuthError: () =>
+    set({ authError: null }),
 
   setDisconnected: (reason) =>
     set({

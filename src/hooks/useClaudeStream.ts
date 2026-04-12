@@ -9,6 +9,7 @@ import type {
   TurnCompletePayload,
   ErrorPayload,
   SessionEndPayload,
+  McpAuthErrorPayload,
 } from "@/types/claude";
 
 /**
@@ -88,6 +89,15 @@ export function useClaudeStream(): void {
         await listen<SessionEndPayload>("claude:session-crashed", (event) => {
           store().setError(
             `Session crashed: ${event.payload.reason}`
+          );
+        })
+      );
+
+      unlisteners.push(
+        await listen<McpAuthErrorPayload>("claude:mcp-auth-error", (event) => {
+          store().setAuthError(
+            event.payload.server_name,
+            event.payload.error_hint
           );
         })
       );
