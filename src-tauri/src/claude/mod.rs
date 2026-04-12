@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod binary_resolver;
 pub mod commands;
 pub mod mcp_config;
 pub mod registry;
