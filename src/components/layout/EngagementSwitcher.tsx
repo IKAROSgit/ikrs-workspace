@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown, Plus } from "lucide-react";
 import { useEngagementStore } from "@/stores/engagementStore";
-import { useEngagement } from "@/hooks/useEngagement";
+import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
 
 interface EngagementSwitcherProps {
   onCreateNew: () => void;
@@ -17,7 +17,7 @@ export function EngagementSwitcher({ onCreateNew }: EngagementSwitcherProps) {
   const engagements = useEngagementStore((s) => s.engagements);
   const clients = useEngagementStore((s) => s.clients);
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
-  const { switchEngagement, switching } = useEngagement();
+  const { switchEngagement, switching } = useWorkspaceSession();
 
   const activeEngagement = engagements.find((e) => e.id === activeEngagementId);
   const activeClient = clients.find((c) => c.id === activeEngagement?.clientId);

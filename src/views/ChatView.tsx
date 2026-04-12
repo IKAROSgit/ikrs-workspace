@@ -8,18 +8,11 @@ import { SessionIndicator } from "@/components/chat/SessionIndicator";
 import { useClaudeStream } from "@/hooks/useClaudeStream";
 import { useClaudeStore } from "@/stores/claudeStore";
 import { useEngagementStore } from "@/stores/engagementStore";
-import {
-  claudeAuthStatus,
-  claudeVersionCheck,
-  spawnClaudeSession,
-  sendClaudeMessage,
-} from "@/lib/tauri-commands";
+import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
+import { sendClaudeMessage } from "@/lib/tauri-commands";
 
 export default function ChatView() {
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
-  const engagement = useEngagementStore((s) =>
-    s.engagements.find((e) => e.id === s.activeEngagementId)
-  );
 
   const sessionId = useClaudeStore((s) => s.sessionId);
   const status = useClaudeStore((s) => s.status);
@@ -28,6 +21,8 @@ export default function ChatView() {
   const totalCostUsd = useClaudeStore((s) => s.totalCostUsd);
   const model = useClaudeStore((s) => s.model);
   const error = useClaudeStore((s) => s.error);
+
+  const { connect: handleConnect, switching } = useWorkspaceSession();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -38,44 +33,6 @@ export default function ChatView() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeTools]);
-
-  const handleConnect = useCallback(async () => {
-    if (!engagement) return;
-
-    // Preflight checks
-    const version = await claudeVersionCheck();
-    if (!version.installed) {
-      useClaudeStore.getState().setError(
-        "Claude CLI not found. Please install Claude Code first."
-      );
-      return;
-    }
-    if (!version.meets_minimum) {
-      useClaudeStore.getState().setError(
-        `Claude CLI ${version.version} is too old. Please update to v2.1.0 or later.`
-      );
-      return;
-    }
-
-    const auth = await claudeAuthStatus();
-    if (!auth.loggedIn) {
-      useClaudeStore.getState().setError(
-        "Not signed in to Claude. Please sign in first from Settings."
-      );
-      return;
-    }
-
-    useClaudeStore.getState().reset();
-    useClaudeStore.setState({ status: "connecting" });
-
-    try {
-      await spawnClaudeSession(engagement.id, engagement.vault.path);
-    } catch (e) {
-      useClaudeStore.getState().setError(
-        e instanceof Error ? e.message : String(e)
-      );
-    }
-  }, [engagement]);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -117,7 +74,7 @@ export default function ChatView() {
 
   return (
     <div className="flex flex-col h-full">
-      <SessionIndicator status={status} model={model} costUsd={totalCostUsd} />
+      <SessionIndicator status={status} model={model} costUsd={totalCostUsd} switching={switching} />
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
