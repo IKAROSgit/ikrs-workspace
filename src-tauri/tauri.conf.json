@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com; img-src 'self' data: https:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost http://localhost:* https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com; img-src 'self' data: https:"
     }
   },
   "bundle": {
@@ -30,6 +30,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-",
+      "frameworks": []
+    },
+    "category": "public.app-category.business"
   }
 }
