@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ClaudeSessionStatus } from "@/types/claude";
+import { SessionDetailsModal } from "@/components/chat/SessionDetailsModal";
 
 interface SessionIndicatorProps {
   status: ClaudeSessionStatus;
   model: string | null;
   costUsd: number;
+  switching?: boolean;
 }
 
 const STATUS_CONFIG: Record<
@@ -22,18 +25,29 @@ export function SessionIndicator({
   status,
   model,
   costUsd,
+  switching,
 }: SessionIndicatorProps) {
+  const [showDetails, setShowDetails] = useState(false);
   const config = STATUS_CONFIG[status];
+  const label = switching ? "Switching..." : config.label;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs text-muted-foreground">
-      <div className="flex items-center gap-1.5">
-        <div className={cn("w-2 h-2 rounded-full", config.color)} />
-        <span>{config.label}</span>
+    <div className="relative">
+      <div
+        className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
+        onClick={() => setShowDetails(!showDetails)}
+      >
+        <div className="flex items-center gap-1.5">
+          <div className={cn("w-2 h-2 rounded-full", switching ? "bg-yellow-400 animate-pulse" : config.color)} />
+          <span>{label}</span>
+        </div>
+        {model && <span className="hidden sm:inline">{model}</span>}
+        {costUsd > 0 && (
+          <span className="ml-auto">${costUsd.toFixed(4)}</span>
+        )}
       </div>
-      {model && <span className="hidden sm:inline">{model}</span>}
-      {costUsd > 0 && (
-        <span className="ml-auto">${costUsd.toFixed(4)}</span>
+      {showDetails && (
+        <SessionDetailsModal onClose={() => setShowDetails(false)} />
       )}
     </div>
   );
