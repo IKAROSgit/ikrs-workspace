@@ -6,6 +6,7 @@ mod skills;
 
 use claude::ClaudeSessionManager;
 use mcp::manager::McpProcessManager;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,6 +22,11 @@ pub fn run() {
         .manage(commands::oauth::OAuthState::default())
         .manage(McpProcessManager::new())
         .manage(ClaudeSessionManager::new())
+        .setup(|app| {
+            let app_data_dir = app.path().app_data_dir().expect("No app data dir");
+            claude::registry::cleanup_orphans(&app_data_dir);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::credentials::store_credential,
             commands::credentials::get_credential,
@@ -43,6 +49,7 @@ pub fn run() {
             claude::commands::spawn_claude_session,
             claude::commands::send_claude_message,
             claude::commands::kill_claude_session,
+            claude::commands::get_resume_session_id,
             // Skills — Phase 2
             skills::commands::scaffold_engagement_skills_cmd,
             skills::commands::check_skill_updates_cmd,

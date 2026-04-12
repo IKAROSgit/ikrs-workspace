@@ -119,8 +119,13 @@ export async function claudeAuthLogin(): Promise<void> {
 export async function spawnClaudeSession(
   engagementId: string,
   engagementPath: string,
+  resumeSessionId?: string,
 ): Promise<string> {
-  return invoke("spawn_claude_session", { engagementId, engagementPath });
+  return invoke("spawn_claude_session", {
+    engagementId,
+    engagementPath,
+    resumeSessionId: resumeSessionId ?? null,
+  });
 }
 
 export async function sendClaudeMessage(
@@ -132,6 +137,12 @@ export async function sendClaudeMessage(
 
 export async function killClaudeSession(sessionId: string): Promise<void> {
   return invoke("kill_claude_session", { sessionId });
+}
+
+export async function getResumeSessionId(
+  engagementId: string,
+): Promise<string | null> {
+  return invoke("get_resume_session_id", { engagementId });
 }
 
 // Skills — Phase 2

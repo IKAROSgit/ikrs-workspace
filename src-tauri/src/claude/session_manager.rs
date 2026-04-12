@@ -32,6 +32,7 @@ impl ClaudeSessionManager {
         &self,
         engagement_id: String,
         engagement_path: String,
+        resume_session_id: Option<String>,
         app: AppHandle,
     ) -> Result<String, String> {
         // Enforce max sessions — kill existing if at limit
@@ -57,17 +58,24 @@ impl ClaudeSessionManager {
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
+        let mut args = vec![
+            "--print".to_string(),
+            "--input-format".to_string(),
+            "stream-json".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--verbose".to_string(),
+            "--disallowed-tools".to_string(),
+            "Bash".to_string(),
+        ];
+
+        if let Some(ref resume_id) = resume_session_id {
+            args.push("--resume".to_string());
+            args.push(resume_id.clone());
+        }
+
         let mut child = Command::new("claude")
-            .args([
-                "--print",
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--disallowed-tools",
-                "Bash",
-            ])
+            .args(&args)
             .current_dir(&engagement_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
