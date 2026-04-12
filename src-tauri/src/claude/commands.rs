@@ -11,6 +11,7 @@ pub async fn spawn_claude_session(
     engagement_path: String,
     resume_session_id: Option<String>,
     client_slug: Option<String>,
+    strict_mcp: Option<bool>,
     state: State<'_, ClaudeSessionManager>,
     app: AppHandle,
 ) -> Result<String, String> {
@@ -25,6 +26,12 @@ pub async fn spawn_claude_session(
         .ok()
         .flatten();
     let has_token = google_token.is_some();
+
+    // Strict MCP: require Google token for fresh spawns (skip on resume -- Codex I2)
+    if resume_session_id.is_none() && strict_mcp.unwrap_or(false) && !has_token {
+        return Err("Strict MCP mode: Google authentication required. Please authenticate before starting this session.".to_string());
+    }
+
     if let Some(ref token) = google_token {
         env_vars.insert("GOOGLE_ACCESS_TOKEN".to_string(), token.clone());
     }

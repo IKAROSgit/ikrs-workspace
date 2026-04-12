@@ -51,6 +51,7 @@ export interface Engagement {
     timezone: string;
     billingRate?: number;
     description?: string;
+    strictMcp?: boolean;
   };
   vault: {
     path: string;

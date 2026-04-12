@@ -70,7 +70,7 @@ export function useWorkspaceSession() {
 
       // Check for resume session
       const resumeId = await getResumeSessionId(engagement.id);
-      await spawnClaudeSession(engagement.id, engagement.vault.path, resumeId ?? undefined, client?.slug);
+      await spawnClaudeSession(engagement.id, engagement.vault.path, resumeId ?? undefined, client?.slug, engagement.settings.strictMcp);
 
       // Frontend-driven resume timeout (5s)
       if (resumeId) {
@@ -83,7 +83,7 @@ export function useWorkspaceSession() {
           }
           useClaudeStore.getState().reset();
           useClaudeStore.setState({ status: "connecting" });
-          await spawnClaudeSession(engagement.id, engagement.vault.path, undefined, client?.slug);
+          await spawnClaudeSession(engagement.id, engagement.vault.path, undefined, client?.slug, engagement.settings.strictMcp);
         }
       }
     } catch (e) {
@@ -129,6 +129,7 @@ export function useWorkspaceSession() {
           engagement.vault.path,
           resumeId ?? undefined,
           switchClient?.slug,
+          engagement.settings.strictMcp,
         );
 
         // Frontend-driven resume timeout (5s)
@@ -139,7 +140,7 @@ export function useWorkspaceSession() {
             if (sid) await killClaudeSession(sid);
             useClaudeStore.getState().reset();
             useClaudeStore.setState({ status: "connecting" });
-            await spawnClaudeSession(newEngagementId, engagement.vault.path, undefined, switchClient?.slug);
+            await spawnClaudeSession(newEngagementId, engagement.vault.path, undefined, switchClient?.slug, engagement.settings.strictMcp);
           }
         }
       }
