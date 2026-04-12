@@ -111,8 +111,9 @@ impl ClaudeSessionManager {
         // Spawn process monitor task (detects crashes)
         let monitor_app = app.clone();
         let monitor_session_id = session_id.clone();
+        let monitor_sessions = Arc::clone(&self.sessions);
         tokio::spawn(async move {
-            monitor_process(child, monitor_session_id, monitor_app).await;
+            monitor_process(child, monitor_session_id, monitor_sessions, monitor_app).await;
         });
 
         // Store session
@@ -176,7 +177,12 @@ impl ClaudeSessionManager {
 }
 
 /// Monitors a Claude child process and emits events on exit.
-async fn monitor_process(mut child: Child, session_id: String, app: AppHandle) {
+async fn monitor_process(
+    mut child: Child,
+    session_id: String,
+    sessions: Arc<Mutex<HashMap<String, ClaudeSession>>>,
+    app: AppHandle,
+) {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -188,6 +194,11 @@ async fn monitor_process(mut child: Child, session_id: String, app: AppHandle) {
                         classify_exit(status.code()),
                     )
                 };
+                // C1 fix: Remove dead session from map BEFORE emitting event
+                {
+                    let mut map = sessions.lock().await;
+                    map.remove(&session_id);
+                }
                 let _ = app.emit(
                     event,
                     SessionEndPayload {
@@ -203,6 +214,11 @@ async fn monitor_process(mut child: Child, session_id: String, app: AppHandle) {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
             Err(e) => {
+                // C1 fix: Remove dead session from map BEFORE emitting event
+                {
+                    let mut map = sessions.lock().await;
+                    map.remove(&session_id);
+                }
                 let _ = app.emit(
                     "claude:session-crashed",
                     SessionEndPayload {
@@ -225,5 +241,38 @@ fn classify_exit(code: Option<i32>) -> String {
         Some(143) => "Process terminated (SIGTERM)".into(),
         None => "Process terminated by signal".into(),
         Some(c) => format!("Unexpected exit code: {c}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_session_removed_after_kill() {
+        let manager = ClaudeSessionManager::new();
+        {
+            let stdin = tokio::process::Command::new("cat")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+                .stdin
+                .take()
+                .unwrap();
+            let session = ClaudeSession {
+                stdin,
+                session_id: "test-sess".to_string(),
+                engagement_id: "test-eng".to_string(),
+            };
+            manager
+                .sessions
+                .lock()
+                .await
+                .insert("test-sess".to_string(), session);
+        }
+        assert!(manager.has_session().await);
+        manager.kill("test-sess").await.unwrap();
+        assert!(!manager.has_session().await);
     }
 }
