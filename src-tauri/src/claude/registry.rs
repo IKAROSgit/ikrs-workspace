@@ -69,7 +69,7 @@ pub fn get_session_id(app_data_dir: &Path, engagement_id: &str) -> Option<String
         .map(|entry| entry.session_id.clone())
 }
 
-/// Check if a PID is alive via `ps`.
+#[cfg(target_family = "unix")]
 fn is_process_alive(pid: u32) -> bool {
     std::process::Command::new("ps")
         .args(["-p", &pid.to_string()])
@@ -80,7 +80,12 @@ fn is_process_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// Check if a PID belongs to a Claude process.
+#[cfg(target_family = "windows")]
+fn is_process_alive(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(target_family = "unix")]
 fn is_claude_process(pid: u32) -> bool {
     let output = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
@@ -91,11 +96,21 @@ fn is_claude_process(pid: u32) -> bool {
     }
 }
 
-/// Kill a process by PID.
+#[cfg(target_family = "windows")]
+fn is_claude_process(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(target_family = "unix")]
 fn kill_process(pid: u32) {
     let _ = std::process::Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .output();
+}
+
+#[cfg(target_family = "windows")]
+fn kill_process(_pid: u32) {
+    // No-op: Windows orphan cleanup deferred to future phase
 }
 
 /// Clean up orphan Claude processes from a previous app crash.
