@@ -273,8 +273,57 @@ fn handle_user_event(raw: &serde_json::Value, app: &AppHandle) {
                     result_content: extract_result_content(&content_ref),
                 },
             );
+
+            // Auth-error detection for MCP tools
+            if is_error {
+                if let Some(content_val) = &content_ref {
+                    let content_str = match content_val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    if is_auth_error(&content_str) {
+                        let server = infer_mcp_server(tool_id);
+                        let _ = app.emit(
+                            "claude:mcp-auth-error",
+                            McpAuthErrorPayload {
+                                server_name: server,
+                                error_hint: cap_string(&content_str, 200),
+                            },
+                        );
+                    }
+                }
+            }
         }
     }
+}
+
+/// Check if an error message indicates an authentication failure.
+fn is_auth_error(content: &str) -> bool {
+    let lower = content.to_lowercase();
+    lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("token expired")
+        || lower.contains("authentication failed")
+        || lower.contains("invalid_grant")
+        || lower.contains("unauthenticated")
+}
+
+/// Infer which MCP server a tool belongs to from the tool_id.
+/// MCP tools are typically prefixed: mcp__gmail__*, mcp__calendar__*, etc.
+fn infer_mcp_server(tool_id: &str) -> String {
+    if tool_id.contains("gmail") {
+        return "gmail".to_string();
+    }
+    if tool_id.contains("calendar") {
+        return "calendar".to_string();
+    }
+    if tool_id.contains("drive") {
+        return "drive".to_string();
+    }
+    if tool_id.contains("obsidian") {
+        return "obsidian".to_string();
+    }
+    "unknown".to_string()
 }
 
 fn handle_result_event(raw: &serde_json::Value, app: &AppHandle) {
@@ -353,5 +402,30 @@ mod tests {
     fn test_extract_result_content_none() {
         let result = extract_result_content(&None);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_is_auth_error_401() {
+        assert!(is_auth_error("HTTP 401 Unauthorized"));
+    }
+
+    #[test]
+    fn test_is_auth_error_token_expired() {
+        assert!(is_auth_error("The token expired at 2026-04-12T10:00:00Z"));
+    }
+
+    #[test]
+    fn test_is_auth_error_normal() {
+        assert!(!is_auth_error("File not found: /some/path"));
+    }
+
+    #[test]
+    fn test_infer_mcp_server_gmail() {
+        assert_eq!(infer_mcp_server("mcp__gmail__read_message"), "gmail");
+    }
+
+    #[test]
+    fn test_infer_mcp_server_unknown() {
+        assert_eq!(infer_mcp_server("toolu_abc123"), "unknown");
     }
 }
