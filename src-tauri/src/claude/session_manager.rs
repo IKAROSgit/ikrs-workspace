@@ -2,7 +2,7 @@ use crate::claude::stream_parser::parse_stream;
 use crate::claude::types::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -27,14 +27,14 @@ impl ClaudeSessionManager {
     }
 
     /// Spawn a new Claude CLI subprocess for an engagement.
-    /// Returns the session_id.
+    /// Returns (session_id, child_pid).
     pub async fn spawn(
         &self,
         engagement_id: String,
         engagement_path: String,
         resume_session_id: Option<String>,
         app: AppHandle,
-    ) -> Result<String, String> {
+    ) -> Result<(String, u32), String> {
         // Enforce max sessions — kill existing if at limit
         {
             let mut sessions = self.sessions.lock().await;
@@ -116,12 +116,16 @@ impl ClaudeSessionManager {
             }
         });
 
+        // Capture child PID before moving into monitor (for registry)
+        let child_pid = child.id().unwrap_or(0);
+
         // Spawn process monitor task (detects crashes)
         let monitor_app = app.clone();
         let monitor_session_id = session_id.clone();
+        let monitor_engagement_id = engagement_id.clone();
         let monitor_sessions = Arc::clone(&self.sessions);
         tokio::spawn(async move {
-            monitor_process(child, monitor_session_id, monitor_sessions, monitor_app).await;
+            monitor_process(child, monitor_session_id, monitor_engagement_id, monitor_sessions, monitor_app).await;
         });
 
         // Store session
@@ -132,7 +136,7 @@ impl ClaudeSessionManager {
         };
         self.sessions.lock().await.insert(session_id.clone(), session);
 
-        Ok(session_id)
+        Ok((session_id, child_pid))
     }
 
     /// Send a user message to an active session.
@@ -168,14 +172,15 @@ impl ClaudeSessionManager {
     }
 
     /// Kill a session by closing its stdin (triggers graceful exit).
-    pub async fn kill(&self, session_id: &str) -> Result<(), String> {
+    /// Returns the engagement_id of the killed session (for registry cleanup).
+    pub async fn kill(&self, session_id: &str) -> Result<String, String> {
         let mut sessions = self.sessions.lock().await;
-        sessions
+        let session = sessions
             .remove(session_id)
             .ok_or_else(|| format!("Session {session_id} not found"))?;
         // Dropping the session closes stdin, which signals EOF to the CLI process.
         // The monitor task will detect the exit and emit claude:session-ended.
-        Ok(())
+        Ok(session.engagement_id)
     }
 
     /// Check if a session is active.
@@ -188,6 +193,7 @@ impl ClaudeSessionManager {
 async fn monitor_process(
     mut child: Child,
     session_id: String,
+    engagement_id: String,
     sessions: Arc<Mutex<HashMap<String, ClaudeSession>>>,
     app: AppHandle,
 ) {
@@ -206,6 +212,10 @@ async fn monitor_process(
                 {
                     let mut map = sessions.lock().await;
                     map.remove(&session_id);
+                }
+                // C2 fix: Unregister from file registry on exit
+                if let Ok(app_data_dir) = app.path().app_data_dir() {
+                    let _ = crate::claude::registry::unregister_session(&app_data_dir, &engagement_id);
                 }
                 let _ = app.emit(
                     event,
@@ -226,6 +236,10 @@ async fn monitor_process(
                 {
                     let mut map = sessions.lock().await;
                     map.remove(&session_id);
+                }
+                // C2 fix: Unregister from file registry on error
+                if let Ok(app_data_dir) = app.path().app_data_dir() {
+                    let _ = crate::claude::registry::unregister_session(&app_data_dir, &engagement_id);
                 }
                 let _ = app.emit(
                     "claude:session-crashed",
@@ -280,7 +294,8 @@ mod tests {
                 .insert("test-sess".to_string(), session);
         }
         assert!(manager.has_session().await);
-        manager.kill("test-sess").await.unwrap();
+        let eng_id = manager.kill("test-sess").await.unwrap();
+        assert_eq!(eng_id, "test-eng");
         assert!(!manager.has_session().await);
     }
 }

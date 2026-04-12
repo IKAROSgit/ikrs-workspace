@@ -9,7 +9,7 @@ pub async fn spawn_claude_session(
     state: State<'_, ClaudeSessionManager>,
     app: AppHandle,
 ) -> Result<String, String> {
-    let session_id = state
+    let (session_id, child_pid) = state
         .spawn(engagement_id.clone(), engagement_path, resume_session_id, app.clone())
         .await?;
 
@@ -22,7 +22,7 @@ pub async fn spawn_claude_session(
         &app_data_dir,
         &engagement_id,
         &session_id,
-        std::process::id(),
+        child_pid,
     );
 
     Ok(session_id)
@@ -41,8 +41,14 @@ pub async fn send_claude_message(
 pub async fn kill_claude_session(
     session_id: String,
     state: State<'_, ClaudeSessionManager>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    state.kill(&session_id).await
+    let engagement_id = state.kill(&session_id).await?;
+    // Unregister from file registry so stale entries don't cause resume attempts
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        let _ = crate::claude::registry::unregister_session(&app_data_dir, &engagement_id);
+    }
+    Ok(())
 }
 
 #[tauri::command]

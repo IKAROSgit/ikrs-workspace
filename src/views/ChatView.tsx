@@ -108,7 +108,7 @@ export default function ChatView() {
 
       <InputBar
         onSend={handleSend}
-        disabled={status === "thinking" || status === "disconnected" || status === "connecting"}
+        disabled={status === "thinking" || status === "disconnected" || status === "connecting" || switching}
         placeholder={
           status === "thinking"
             ? "Claude is thinking..."
