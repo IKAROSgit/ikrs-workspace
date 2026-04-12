@@ -105,10 +105,24 @@ pub async fn start_redirect_server(
             .as_str()
             .ok_or("Missing access_token")?
             .to_string();
+        let refresh_token = json["refresh_token"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
 
-        // Store in keychain
+        // Store as JSON payload in keychain (includes refresh_token for auto-refresh)
+        let payload = crate::oauth::token_refresh::TokenPayload {
+            access_token,
+            refresh_token,
+            expires_at: chrono::Utc::now().timestamp() + expires_in,
+            client_id: client_id.clone(),
+        };
+        let payload_json = serde_json::to_string(&payload)
+            .map_err(|e| format!("Failed to serialize token payload: {e}"))?;
+
         app.keyring()
-            .set_password(IKRS_SERVICE, &keychain_key, &access_token)
+            .set_password(IKRS_SERVICE, &keychain_key, &payload_json)
             .map_err(|e| format!("Keychain store failed: {e}"))?;
 
         // Emit event so frontend knows token is ready
