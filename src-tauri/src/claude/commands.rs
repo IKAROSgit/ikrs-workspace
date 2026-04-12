@@ -1,9 +1,6 @@
 use crate::claude::session_manager::ClaudeSessionManager;
 use crate::commands::credentials::make_keychain_key;
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_keyring::KeyringExt;
-
-const IKRS_SERVICE: &str = "ikrs-workspace";
 
 #[tauri::command]
 pub async fn spawn_claude_session(
@@ -18,13 +15,11 @@ pub async fn spawn_claude_session(
     let mut env_vars = std::collections::HashMap::new();
     let mut mcp_config_path: Option<String> = None;
 
-    // 1. Read Google OAuth token from keychain (KeyringExt pattern)
+    // 1. Read Google OAuth token from keychain, refresh if expired
     let keychain_key = make_keychain_key(&engagement_id, "google");
-    let google_token = app
-        .keyring()
-        .get_password(IKRS_SERVICE, &keychain_key)
-        .ok()
-        .flatten();
+    let google_token = crate::oauth::token_refresh::refresh_if_needed(&keychain_key, &app)
+        .await
+        .ok();
     let has_token = google_token.is_some();
 
     // Strict MCP: require Google token for fresh spawns (skip on resume -- Codex I2)
