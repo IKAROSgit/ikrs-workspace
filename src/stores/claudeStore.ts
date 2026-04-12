@@ -14,8 +14,8 @@ interface ClaudeState {
   setSessionReady: (sessionId: string, tools: string[], model: string) => void;
   addUserMessage: (text: string) => void;
   addTextDelta: (messageId: string, text: string) => void;
-  startTool: (toolId: string, toolName: string, friendlyLabel: string) => void;
-  endTool: (toolId: string, success: boolean, summary: string) => void;
+  startTool: (toolId: string, toolName: string, friendlyLabel: string, toolInput?: string) => void;
+  endTool: (toolId: string, success: boolean, summary: string, resultContent?: string) => void;
   completeTurn: (costUsd: number, durationMs: number) => void;
   setError: (message: string) => void;
   setDisconnected: (reason: string) => void;
@@ -88,7 +88,7 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
       };
     }),
 
-  startTool: (toolId, toolName, friendlyLabel) =>
+  startTool: (toolId, toolName, friendlyLabel, toolInput) =>
     set((state) => ({
       activeTools: [
         ...state.activeTools,
@@ -97,12 +97,13 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
           toolName,
           friendlyLabel,
           status: "running" as const,
+          toolInput: toolInput ?? undefined,
           startedAt: new Date(),
         },
       ],
     })),
 
-  endTool: (toolId, success, summary) =>
+  endTool: (toolId, success, summary, resultContent) =>
     set((state) => ({
       activeTools: state.activeTools.map((t) =>
         t.toolId === toolId
@@ -110,6 +111,7 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
               ...t,
               status: (success ? "success" : "error") as "success" | "error",
               summary,
+              resultContent: resultContent ?? undefined,
               completedAt: new Date(),
             }
           : t

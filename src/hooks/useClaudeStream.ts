@@ -46,7 +46,8 @@ export function useClaudeStream(): void {
           store().startTool(
             event.payload.tool_id,
             event.payload.tool_name,
-            event.payload.friendly_label
+            event.payload.friendly_label,
+            event.payload.tool_input ?? undefined
           );
         })
       );
@@ -56,7 +57,8 @@ export function useClaudeStream(): void {
           store().endTool(
             event.payload.tool_id,
             event.payload.success,
-            event.payload.summary
+            event.payload.summary,
+            event.payload.result_content ?? undefined
           );
         })
       );

@@ -79,4 +79,17 @@ describe("claudeStore", () => {
     expect(state.messages).toEqual([]);
     expect(state.sessionId).toBeNull();
   });
+
+  it("startTool stores toolInput", () => {
+    useClaudeStore.getState().startTool("tu_1", "Read", "Reading file.md", '{"file_path":"/test.md"}');
+    const state = useClaudeStore.getState();
+    expect(state.activeTools[0]!.toolInput).toBe('{"file_path":"/test.md"}');
+  });
+
+  it("endTool stores resultContent", () => {
+    useClaudeStore.getState().startTool("tu_1", "Read", "Reading file.md");
+    useClaudeStore.getState().endTool("tu_1", true, "Completed", "file contents here");
+    const state = useClaudeStore.getState();
+    expect(state.activeTools[0]!.resultContent).toBe("file contents here");
+  });
 });

@@ -19,6 +19,8 @@ export interface ToolActivity {
   friendlyLabel: string;
   status: "running" | "success" | "error";
   summary?: string;
+  toolInput?: string;
+  resultContent?: string;
   startedAt: Date;
   completedAt?: Date;
 }
@@ -39,12 +41,14 @@ export interface ToolStartPayload {
   tool_id: string;
   tool_name: string;
   friendly_label: string;
+  tool_input: string | null;
 }
 
 export interface ToolEndPayload {
   tool_id: string;
   success: boolean;
   summary: string;
+  result_content: string | null;
 }
 
 export interface TurnCompletePayload {
