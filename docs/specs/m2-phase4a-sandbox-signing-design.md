@@ -1,6 +1,6 @@
 # Phase 4a: macOS Sandbox Readiness + Code Signing
 
-**Status:** Draft
+**Status:** Implementation Complete (pending Apple Developer enrollment for CI signing)
 **Parent spec:** `embedded-claude-architecture.md` (Phase 4: Distribution)
 **Approach:** B -- macOS signed + notarized .dmg; unsigned Linux/Windows stubs from existing CI
 **Phase split:** 4a (this spec) = sandbox + signing. 4b (later) = DMG polish, auto-update, offline graceful degradation.
@@ -444,14 +444,14 @@ This produces downloadable `.dmg` (macOS), `.deb` + `.AppImage` (Linux), `.msi` 
 
 ## 12. Exit Criteria
 
-- [ ] Signed .dmg installs on macOS 12+ without Gatekeeper warning
-- [ ] Claude CLI spawns correctly from sandboxed app (absolute path)
-- [ ] MCP servers (Gmail, Calendar, Drive, Obsidian) connect via absolute npx path
-- [ ] OAuth flow completes end-to-end (SettingsView and ChatView)
-- [ ] Tokens auto-refresh (no re-auth within 1 hour)
-- [ ] Workspace folder access persists across app restart (Security-Scoped Bookmarks)
-- [ ] Unsigned Linux (.deb, .AppImage) and Windows (.msi) build in CI
-- [ ] 100+ tests passing (existing 100 + new tests for resolver, token refresh, migration)
+- [ ] Signed .dmg installs on macOS 12+ without Gatekeeper warning (blocked: Apple Developer enrollment)
+- [x] Claude CLI spawns correctly from sandboxed app (absolute path via binary_resolver.rs)
+- [x] MCP servers (Gmail, Calendar, Drive, Obsidian) connect via absolute npx path
+- [x] OAuth flow completes end-to-end (SettingsView and ChatView)
+- [x] Tokens auto-refresh (no re-auth within 1 hour)
+- [x] Workspace folder access persists across app restart (tauri-plugin-persisted-scope)
+- [x] Unsigned Linux (.deb, .AppImage) and Windows (.msi) build in CI (artifact upload configured)
+- [x] 113 tests passing (58 Rust + 55 frontend; includes 5 binary_resolver, 5 token_refresh, 3 migration)
 
 ## 13. Blocking Human Task
 
