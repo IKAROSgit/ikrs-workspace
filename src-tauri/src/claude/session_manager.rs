@@ -89,12 +89,23 @@ impl ClaudeSessionManager {
             .as_ref()
             .ok_or("Claude CLI not found. Please install Claude Code (https://claude.ai/code).")?;
 
+        // Prepend resolved binary directories to existing PATH so Claude CLI
+        // can find npx/node under macOS App Sandbox (where PATH is restricted).
+        let resolved_path = resolved.to_path_env();
+        let existing_path = std::env::var("PATH").unwrap_or_default();
+        let full_path = if resolved_path.is_empty() {
+            existing_path
+        } else if existing_path.is_empty() {
+            resolved_path
+        } else {
+            format!("{resolved_path}:{existing_path}")
+        };
+
         // Note: .envs() is additive — it adds to the inherited environment, not replaces it.
-        // PATH is injected before envs so child processes can find npx/node under sandbox.
         let mut child = Command::new(claude_path)
             .args(&args)
             .current_dir(&engagement_path)
-            .env("PATH", resolved.to_path_env())
+            .env("PATH", full_path)
             .envs(&env_vars)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

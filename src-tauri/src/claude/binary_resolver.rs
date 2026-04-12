@@ -28,7 +28,7 @@ impl ResolvedBinaries {
             .iter()
             .map(|d| d.to_string_lossy().to_string())
             .collect::<Vec<_>>()
-            .join(":")
+            .join(if cfg!(target_family = "windows") { ";" } else { ":" })
     }
 }
 
@@ -86,8 +86,10 @@ fn resolve_node(home: &PathBuf) -> Option<PathBuf> {
 }
 
 /// Try `which` first (captures user's current PATH), then fall back to known paths.
+/// Note: `which` does not exist on Windows (equivalent is `where.exe`). The `Command::new("which")`
+/// call gracefully returns Err on Windows, falling through to candidate path checks.
 fn resolve_binary(name: &str, candidates: &[PathBuf]) -> Option<PathBuf> {
-    // Try `which` first
+    // Try `which` first (Unix only; gracefully fails on Windows)
     if let Ok(output) = Command::new("which").arg(name).output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
