@@ -9,7 +9,8 @@ import { useClaudeStream } from "@/hooks/useClaudeStream";
 import { useClaudeStore } from "@/stores/claudeStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
-import { sendClaudeMessage, startOAuth, killClaudeSession } from "@/lib/tauri-commands";
+import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession } from "@/lib/tauri-commands";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-opener";
 
 const GOOGLE_SCOPES = [
@@ -67,21 +68,37 @@ export default function ChatView() {
     setReauthing(true);
     clearAuthError();
     try {
-      const { auth_url } = await startOAuth(OAUTH_CLIENT_ID, OAUTH_PORT, GOOGLE_SCOPES);
+      const unlisten = await listen<{ keychain_key: string }>(
+        "oauth:token-stored",
+        async () => {
+          unlisten();
+          const sid = useClaudeStore.getState().sessionId;
+          if (sid) await killClaudeSession(sid);
+          await handleConnect();
+          setReauthing(false);
+        }
+      );
+
+      const { auth_url } = await startOAuthFlow(
+        activeEngagementId!,
+        OAUTH_CLIENT_ID,
+        OAUTH_PORT,
+        GOOGLE_SCOPES
+      );
       await open(auth_url);
-      // User completes OAuth in browser; redirect handler stores token.
-      // Kill current session and reconnect with fresh token from keychain.
-      const sid = useClaudeStore.getState().sessionId;
-      if (sid) await killClaudeSession(sid);
-      await handleConnect();
+
+      setTimeout(async () => {
+        unlisten();
+        await cancelOAuthFlow();
+        setReauthing(false);
+      }, 5 * 60 * 1000);
     } catch (e) {
       useClaudeStore.getState().setError(
         `Re-auth failed: ${e instanceof Error ? e.message : String(e)}`
       );
-    } finally {
       setReauthing(false);
     }
-  }, [reauthing, clearAuthError, handleConnect]);
+  }, [reauthing, clearAuthError, handleConnect, activeEngagementId]);
 
   // No engagement selected
   if (!activeEngagementId) {
@@ -149,7 +166,7 @@ export default function ChatView() {
               disabled={reauthing}
               className="ml-auto"
             >
-              {reauthing ? "Re-authenticating..." : "Re-authenticate"}
+              {reauthing ? "Waiting for sign-in..." : "Re-authenticate"}
             </Button>
           </div>
         )}

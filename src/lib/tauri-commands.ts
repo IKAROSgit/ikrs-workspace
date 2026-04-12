@@ -44,6 +44,29 @@ export async function exchangeOAuthCode(
   return invoke("exchange_oauth_code", { code, clientId, redirectPort });
 }
 
+export interface OAuthFlowResult {
+  auth_url: string;
+  actual_port: number;
+}
+
+export async function startOAuthFlow(
+  engagementId: string,
+  clientId: string,
+  redirectPort: number,
+  scopes: string[],
+): Promise<OAuthFlowResult> {
+  return invoke("start_oauth_flow", {
+    engagementId,
+    clientId,
+    redirectPort,
+    scopes,
+  });
+}
+
+export async function cancelOAuthFlow(): Promise<void> {
+  return invoke("cancel_oauth_flow");
+}
+
 // Vault lifecycle
 export async function createVault(clientSlug: string): Promise<string> {
   return invoke("create_vault", { clientSlug });
@@ -80,12 +103,14 @@ export async function spawnClaudeSession(
   engagementPath: string,
   resumeSessionId?: string,
   clientSlug?: string,
+  strictMcp?: boolean,
 ): Promise<string> {
   return invoke("spawn_claude_session", {
     engagementId,
     engagementPath,
     resumeSessionId: resumeSessionId ?? null,
     clientSlug: clientSlug ?? null,
+    strictMcp: strictMcp ?? null,
   });
 }
 
