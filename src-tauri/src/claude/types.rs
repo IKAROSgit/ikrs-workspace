@@ -163,4 +163,11 @@ pub struct VersionCheck {
     pub meets_minimum: bool,
 }
 
+/// Emitted when an MCP tool returns an auth-related error (401, token expired, etc.)
+#[derive(Debug, Clone, Serialize)]
+pub struct McpAuthErrorPayload {
+    pub server_name: String,
+    pub error_hint: String,
+}
+
 pub const MIN_CLAUDE_VERSION: &str = "2.1.0";

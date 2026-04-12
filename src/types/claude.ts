@@ -78,3 +78,8 @@ export interface VersionCheck {
   version: string | null;
   meets_minimum: boolean;
 }
+
+export interface McpAuthErrorPayload {
+  server_name: string;
+  error_hint: string;
+}
