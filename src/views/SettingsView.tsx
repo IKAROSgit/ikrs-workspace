@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { homeDir } from "@tauri-apps/api/path";
-import { open } from "@tauri-apps/plugin-shell";
+import { open } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEngagementActions } from "@/providers/EngagementProvider";
 import { useEngagementStore } from "@/stores/engagementStore";
-import { startOAuth, scaffoldEngagementSkills } from "@/lib/tauri-commands";
+import { startOAuthFlow, cancelOAuthFlow, scaffoldEngagementSkills } from "@/lib/tauri-commands";
 import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
 import type { SkillUpdateParams } from "@/types/skills";
 
@@ -118,16 +119,43 @@ export default function SettingsView() {
   const handleConnectGoogle = async () => {
     if (!activeEngagementId) return;
     setOauthStatus("pending");
+
+    let unlisten: (() => void) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      const { auth_url } = await startOAuth(
+      // Subscribe to token-stored event BEFORE starting the flow
+      const tokenPromise = new Promise<boolean>((resolve) => {
+        listen("oauth:token-stored", () => {
+          resolve(true);
+        }).then((fn) => {
+          unlisten = fn;
+        });
+
+        timeout = setTimeout(() => {
+          resolve(false);
+        }, 300_000); // 5-minute timeout
+      });
+
+      const { auth_url } = await startOAuthFlow(
+        activeEngagementId,
         OAUTH_CLIENT_ID,
         OAUTH_PORT,
         GOOGLE_SCOPES,
       );
       await open(auth_url);
-      setOauthStatus("success");
+
+      const success = await tokenPromise;
+      setOauthStatus(success ? "success" : "error");
+
+      if (!success) {
+        await cancelOAuthFlow();
+      }
     } catch {
       setOauthStatus("error");
+    } finally {
+      unlisten?.();
+      if (timeout) clearTimeout(timeout);
     }
   };
 
