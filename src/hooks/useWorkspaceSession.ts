@@ -63,9 +63,14 @@ export function useWorkspaceSession() {
     useClaudeStore.setState({ status: "connecting" });
 
     try {
+      // Resolve client slug for MCP config generation
+      const client = useEngagementStore.getState().clients.find(
+        (c) => c.id === engagement.clientId
+      );
+
       // Check for resume session
       const resumeId = await getResumeSessionId(engagement.id);
-      await spawnClaudeSession(engagement.id, engagement.vault.path, resumeId ?? undefined);
+      await spawnClaudeSession(engagement.id, engagement.vault.path, resumeId ?? undefined, client?.slug);
 
       // Frontend-driven resume timeout (5s)
       if (resumeId) {
@@ -78,7 +83,7 @@ export function useWorkspaceSession() {
           }
           useClaudeStore.getState().reset();
           useClaudeStore.setState({ status: "connecting" });
-          await spawnClaudeSession(engagement.id, engagement.vault.path);
+          await spawnClaudeSession(engagement.id, engagement.vault.path, undefined, client?.slug);
         }
       }
     } catch (e) {
@@ -114,12 +119,16 @@ export function useWorkspaceSession() {
       const engagement = useEngagementStore.getState().engagements.find(
         (e) => e.id === newEngagementId
       );
+      const switchClient = useEngagementStore.getState().clients.find(
+        (c) => c.id === engagement?.clientId
+      );
       if (engagement) {
         useClaudeStore.setState({ status: "connecting" });
         await spawnClaudeSession(
           newEngagementId,
           engagement.vault.path,
           resumeId ?? undefined,
+          switchClient?.slug,
         );
 
         // Frontend-driven resume timeout (5s)
@@ -130,7 +139,7 @@ export function useWorkspaceSession() {
             if (sid) await killClaudeSession(sid);
             useClaudeStore.getState().reset();
             useClaudeStore.setState({ status: "connecting" });
-            await spawnClaudeSession(newEngagementId, engagement.vault.path);
+            await spawnClaudeSession(newEngagementId, engagement.vault.path, undefined, switchClient?.slug);
           }
         }
       }
