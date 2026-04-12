@@ -92,4 +92,62 @@ describe("claudeStore", () => {
     const state = useClaudeStore.getState();
     expect(state.activeTools[0]!.resultContent).toBe("file contents here");
   });
+
+  it("setSessionReady sets sessionStartedAt", () => {
+    const before = Date.now();
+    useClaudeStore.getState().setSessionReady("sess-1", ["Read"], "claude-sonnet-4-6");
+    const state = useClaudeStore.getState();
+    expect(state.sessionStartedAt).toBeGreaterThanOrEqual(before);
+    expect(state.sessionStartedAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  describe("history partitioning", () => {
+    it("saveAndClearHistory saves messages and clears state", () => {
+      useClaudeStore.getState().addUserMessage("Hello");
+      useClaudeStore.getState().addTextDelta("msg_1", "Hi back");
+      useClaudeStore.getState().startTool("tu_1", "Read", "Reading file");
+
+      useClaudeStore.getState().saveAndClearHistory("eng-1");
+      const state = useClaudeStore.getState();
+      expect(state.messages).toEqual([]);
+      expect(state.activeTools).toEqual([]);
+      expect(state.engagementId).toBeNull();
+      expect(state.historyCache["eng-1"]).toHaveLength(2);
+    });
+
+    it("loadHistory restores messages", () => {
+      useClaudeStore.getState().addUserMessage("Hello");
+      useClaudeStore.getState().saveAndClearHistory("eng-1");
+
+      // Switch to different engagement
+      useClaudeStore.getState().addUserMessage("Other");
+      useClaudeStore.getState().saveAndClearHistory("eng-2");
+
+      // Load eng-1
+      useClaudeStore.getState().loadHistory("eng-1");
+      const state = useClaudeStore.getState();
+      expect(state.engagementId).toBe("eng-1");
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0]!.text).toBe("Hello");
+    });
+
+    it("loadHistory returns empty for unknown engagement", () => {
+      useClaudeStore.getState().loadHistory("eng-unknown");
+      const state = useClaudeStore.getState();
+      expect(state.messages).toEqual([]);
+      expect(state.engagementId).toBe("eng-unknown");
+    });
+
+    it("saveAndClearHistory applies FIFO cap of 50", () => {
+      for (let i = 0; i < 60; i++) {
+        useClaudeStore.getState().addUserMessage(`Message ${i}`);
+      }
+      useClaudeStore.getState().saveAndClearHistory("eng-full");
+      const cached = useClaudeStore.getState().historyCache["eng-full"];
+      expect(cached).toHaveLength(50);
+      // Should keep the LAST 50 (messages 10-59)
+      expect(cached![0]!.text).toBe("Message 10");
+      expect(cached![49]!.text).toBe("Message 59");
+    });
+  });
 });

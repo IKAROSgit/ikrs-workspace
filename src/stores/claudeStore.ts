@@ -10,6 +10,9 @@ interface ClaudeState {
   error: string | null;
   availableTools: string[];
   model: string | null;
+  sessionStartedAt: number | null;
+  engagementId: string | null;
+  historyCache: Record<string, ChatMessage[]>;
 
   setSessionReady: (sessionId: string, tools: string[], model: string) => void;
   addUserMessage: (text: string) => void;
@@ -19,6 +22,8 @@ interface ClaudeState {
   completeTurn: (costUsd: number, durationMs: number) => void;
   setError: (message: string) => void;
   setDisconnected: (reason: string) => void;
+  saveAndClearHistory: (engagementId: string) => void;
+  loadHistory: (engagementId: string) => void;
   reset: () => void;
 }
 
@@ -31,6 +36,9 @@ const initialState = {
   error: null as string | null,
   availableTools: [] as string[],
   model: null as string | null,
+  sessionStartedAt: null as number | null,
+  engagementId: null as string | null,
+  historyCache: {} as Record<string, ChatMessage[]>,
 };
 
 export const useClaudeStore = create<ClaudeState>()((set) => ({
@@ -43,6 +51,7 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
       availableTools: tools,
       model,
       error: null,
+      sessionStartedAt: Date.now(),
     }),
 
   addUserMessage: (text) =>
@@ -139,6 +148,30 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
       sessionId: null,
       error: reason || null,
     }),
+
+  saveAndClearHistory: (engagementId) =>
+    set((state) => {
+      const FIFO_CAP = 50;
+      const messagesToSave =
+        state.messages.length > FIFO_CAP
+          ? state.messages.slice(-FIFO_CAP)
+          : [...state.messages];
+      return {
+        historyCache: {
+          ...state.historyCache,
+          [engagementId]: messagesToSave,
+        },
+        messages: [],
+        activeTools: [],
+        engagementId: null,
+      };
+    }),
+
+  loadHistory: (engagementId) =>
+    set((state) => ({
+      engagementId,
+      messages: state.historyCache[engagementId] ?? [],
+    })),
 
   reset: () => set(initialState),
 }));
