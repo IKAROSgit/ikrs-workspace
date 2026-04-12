@@ -114,6 +114,7 @@ pub struct ToolStartPayload {
     pub tool_id: String,
     pub tool_name: String,
     pub friendly_label: String,
+    pub tool_input: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,6 +122,7 @@ pub struct ToolEndPayload {
     pub tool_id: String,
     pub success: bool,
     pub summary: String,
+    pub result_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -54,6 +54,36 @@ fn summarize_tool_result(content: &Option<serde_json::Value>, is_error: bool) ->
     }
 }
 
+/// Cap a string to `max_chars` characters (UTF-8 safe).
+fn cap_string(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars - 3).collect();
+        format!("{truncated}...")
+    }
+}
+
+/// Serialize tool input to a JSON string, capped at 4096 chars.
+fn serialize_tool_input(input: &serde_json::Value) -> Option<String> {
+    match serde_json::to_string(input) {
+        Ok(s) => Some(cap_string(&s, 4096)),
+        Err(_) => None,
+    }
+}
+
+/// Extract result content from a tool_result content block, capped at 2048 chars.
+fn extract_result_content(content: &Option<serde_json::Value>) -> Option<String> {
+    match content {
+        Some(serde_json::Value::String(s)) => Some(cap_string(s, 2048)),
+        Some(v) => match serde_json::to_string(v) {
+            Ok(s) => Some(cap_string(&s, 2048)),
+            Err(_) => None,
+        },
+        None => None,
+    }
+}
+
 /// Counter for generating unique message IDs within a session.
 struct MessageIdGen {
     counter: u64,
@@ -199,6 +229,7 @@ fn handle_assistant_event(
                         tool_id: tool_id.to_string(),
                         tool_name: tool_name.to_string(),
                         friendly_label: friendly_label(tool_name, input),
+                        tool_input: serialize_tool_input(input),
                     },
                 );
             }
@@ -232,12 +263,14 @@ fn handle_user_event(raw: &serde_json::Value, app: &AppHandle) {
         if block["type"].as_str() == Some("tool_result") {
             let tool_id = block["tool_use_id"].as_str().unwrap_or("unknown");
             let is_error = block["is_error"].as_bool().unwrap_or(false);
+            let content_ref = block.get("content").cloned();
             let _ = app.emit(
                 "claude:tool-end",
                 ToolEndPayload {
                     tool_id: tool_id.to_string(),
                     success: !is_error,
-                    summary: summarize_tool_result(&block.get("content").cloned(), is_error),
+                    summary: summarize_tool_result(&content_ref, is_error),
+                    result_content: extract_result_content(&content_ref),
                 },
             );
         }
@@ -270,5 +303,55 @@ fn handle_result_event(raw: &serde_json::Value, app: &AppHandle) {
                 duration_ms: raw["duration_ms"].as_u64().unwrap_or(0),
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cap_string_short() {
+        let s = "hello world";
+        let capped = cap_string(s, 4096);
+        assert_eq!(capped, "hello world");
+    }
+
+    #[test]
+    fn test_cap_string_long() {
+        let s = "x".repeat(5000);
+        let capped = cap_string(&s, 4096);
+        assert_eq!(capped.chars().count(), 4096);
+        assert!(capped.ends_with("..."));
+    }
+
+    #[test]
+    fn test_cap_string_utf8_safe() {
+        // Arabic text (multi-byte chars) should not panic
+        let s = "\u{0627}\u{0644}\u{0633}\u{0644}\u{0627}\u{0645}".repeat(1000);
+        let capped = cap_string(&s, 100);
+        assert_eq!(capped.chars().count(), 100);
+        assert!(capped.ends_with("..."));
+    }
+
+    #[test]
+    fn test_serialize_tool_input_under_cap() {
+        let input = serde_json::json!({"file_path": "/test/file.md"});
+        let result = serialize_tool_input(&input);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("file.md"));
+    }
+
+    #[test]
+    fn test_extract_result_content_string() {
+        let content = Some(serde_json::json!("File contents here"));
+        let result = extract_result_content(&content);
+        assert_eq!(result, Some("File contents here".to_string()));
+    }
+
+    #[test]
+    fn test_extract_result_content_none() {
+        let result = extract_result_content(&None);
+        assert_eq!(result, None);
     }
 }
