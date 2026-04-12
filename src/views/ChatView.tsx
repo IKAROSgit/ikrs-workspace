@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -9,7 +9,16 @@ import { useClaudeStream } from "@/hooks/useClaudeStream";
 import { useClaudeStore } from "@/stores/claudeStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
-import { sendClaudeMessage } from "@/lib/tauri-commands";
+import { sendClaudeMessage, startOAuth, killClaudeSession } from "@/lib/tauri-commands";
+import { open } from "@tauri-apps/plugin-opener";
+
+const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/drive.file",
+];
+const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
+const OAUTH_PORT = 49152;
 
 export default function ChatView() {
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
@@ -22,8 +31,12 @@ export default function ChatView() {
   const model = useClaudeStore((s) => s.model);
   const error = useClaudeStore((s) => s.error);
 
+  const authError = useClaudeStore((s) => s.authError);
+  const clearAuthError = useClaudeStore((s) => s.clearAuthError);
+
   const { connect: handleConnect, switching } = useWorkspaceSession();
 
+  const [reauthing, setReauthing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to Tauri events
@@ -48,6 +61,27 @@ export default function ChatView() {
     },
     [sessionId]
   );
+
+  const handleReauth = useCallback(async () => {
+    if (reauthing) return;
+    setReauthing(true);
+    clearAuthError();
+    try {
+      const { auth_url } = await startOAuth(OAUTH_CLIENT_ID, OAUTH_PORT, GOOGLE_SCOPES);
+      await open(auth_url);
+      // User completes OAuth in browser; redirect handler stores token.
+      // Kill current session and reconnect with fresh token from keychain.
+      const sid = useClaudeStore.getState().sessionId;
+      if (sid) await killClaudeSession(sid);
+      await handleConnect();
+    } catch (e) {
+      useClaudeStore.getState().setError(
+        `Re-auth failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    } finally {
+      setReauthing(false);
+    }
+  }, [reauthing, clearAuthError, handleConnect]);
 
   // No engagement selected
   if (!activeEngagementId) {
@@ -99,6 +133,23 @@ export default function ChatView() {
               className="ml-auto"
             >
               Retry
+            </Button>
+          </div>
+        )}
+
+        {authError && (
+          <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm">
+            <span>
+              Google authentication expired for {authError.server}. Re-authenticate to restore access.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReauth}
+              disabled={reauthing}
+              className="ml-auto"
+            >
+              {reauthing ? "Re-authenticating..." : "Re-authenticate"}
             </Button>
           </div>
         )}
