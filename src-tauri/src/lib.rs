@@ -1,11 +1,9 @@
 mod claude;
 mod commands;
-mod mcp;
 mod oauth;
 mod skills;
 
 use claude::ClaudeSessionManager;
-use mcp::manager::McpProcessManager;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,7 +18,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_keyring::init())
         .manage(commands::oauth::OAuthState::default())
-        .manage(McpProcessManager::new())
         .manage(ClaudeSessionManager::new())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("No app data dir");
@@ -33,11 +30,6 @@ pub fn run() {
             commands::credentials::delete_credential,
             commands::oauth::start_oauth,
             commands::oauth::exchange_oauth_code,
-            commands::mcp::spawn_mcp,
-            commands::mcp::kill_mcp,
-            commands::mcp::kill_all_mcp,
-            commands::mcp::mcp_health,
-            commands::mcp::restart_mcp,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,
