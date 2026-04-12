@@ -2,16 +2,18 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
-    "shell:default",
-    "fs:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [{ "name": "claude", "cmd": "", "args": true }]
+    },
+    "fs:allow-read",
+    "fs:allow-write",
     "sql:default",
-    "http:default",
+    "http:allow-fetch",
     "notification:default",
     "dialog:default",
     "keyring:default"
