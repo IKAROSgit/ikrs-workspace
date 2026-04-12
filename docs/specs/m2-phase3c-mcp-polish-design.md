@@ -1,6 +1,6 @@
 # M2 Phase 3c: MCP Polish + Test Coverage
 
-**Status:** Draft
+**Status:** Complete
 **Date:** 2026-04-12
 **Parent spec:** `embedded-claude-architecture.md` (Phase 3)
 **Prior phase:** `m2-phase3b-mcp-wiring-design.md` (complete, Codex 9/10)
