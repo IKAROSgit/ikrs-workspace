@@ -30,6 +30,8 @@ pub fn run() {
             commands::credentials::delete_credential,
             commands::oauth::start_oauth,
             commands::oauth::exchange_oauth_code,
+            commands::oauth::start_oauth_flow,
+            commands::oauth::cancel_oauth_flow,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,
