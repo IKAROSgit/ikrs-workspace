@@ -19,6 +19,10 @@ src-tauri/target/
 .env
 .env.local
 
+# Generated MCP config (per-engagement, written at spawn time)
+.mcp-config.json
+.mcp-config.json.tmp
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
