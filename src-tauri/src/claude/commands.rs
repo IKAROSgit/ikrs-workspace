@@ -1,26 +1,69 @@
 use crate::claude::session_manager::ClaudeSessionManager;
+use crate::commands::credentials::make_keychain_key;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_keyring::KeyringExt;
+
+const IKRS_SERVICE: &str = "ikrs-workspace";
 
 #[tauri::command]
 pub async fn spawn_claude_session(
     engagement_id: String,
     engagement_path: String,
     resume_session_id: Option<String>,
+    client_slug: Option<String>,
     state: State<'_, ClaudeSessionManager>,
     app: AppHandle,
 ) -> Result<String, String> {
+    let mut env_vars = std::collections::HashMap::new();
+    let mut mcp_config_path: Option<String> = None;
+
+    // 1. Read Google OAuth token from keychain (KeyringExt pattern)
+    let keychain_key = make_keychain_key(&engagement_id, "google");
+    let google_token = app
+        .keyring()
+        .get_password(IKRS_SERVICE, &keychain_key)
+        .ok()
+        .flatten();
+    let has_token = google_token.is_some();
+    if let Some(ref token) = google_token {
+        env_vars.insert("GOOGLE_ACCESS_TOKEN".to_string(), token.clone());
+    }
+
+    // 2. Resolve vault path and ensure directory exists (Codex C1 fix)
+    //    Only if client_slug is provided (engagements without clients skip MCP)
+    if let Some(ref slug) = client_slug {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let vault_path = std::path::PathBuf::from(&home)
+            .join(".ikrs-workspace")
+            .join("vaults")
+            .join(slug);
+        if !vault_path.exists() {
+            let _ = std::fs::create_dir_all(&vault_path);
+        }
+
+        // 3. Generate MCP config
+        let engagement_dir = std::path::Path::new(&engagement_path);
+        let config_path = crate::claude::mcp_config::generate_mcp_config(
+            engagement_dir,
+            has_token,
+            Some(&vault_path),
+        )?;
+        mcp_config_path = Some(config_path.to_string_lossy().to_string());
+    }
+
+    // 4. Spawn Claude with MCP config
     let (session_id, child_pid) = state
         .spawn(
             engagement_id.clone(),
             engagement_path,
             resume_session_id,
-            std::collections::HashMap::new(),
-            None,
+            env_vars,
+            mcp_config_path,
             app.clone(),
         )
         .await?;
 
-    // Register in session registry for resume + orphan cleanup
+    // 5. Register in session registry for resume + orphan cleanup
     let app_data_dir = app
         .path()
         .app_data_dir()
