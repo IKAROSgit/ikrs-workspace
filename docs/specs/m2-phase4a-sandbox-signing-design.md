@@ -44,6 +44,8 @@ On macOS, Tauri derives the app data directory from the identifier:
 
 Add a one-time migration check in `lib.rs` setup hook: if old directory exists and new does not, move `session-registry.json` and any SQLite databases from old to new. Log the migration. This only affects developers who ran pre-distribution builds.
 
+**Keychain entries are unaffected** (Codex S4): The keyring plugin uses `IKRS_SERVICE = "ikrs-workspace"` as the service name, not the bundle identifier. Keychain entries survive the identifier change without migration.
+
 ### 3.2 P2: OAuth Refresh Token Storage (Codex B2 + C1)
 
 **Problem:** `redirect_server.rs` (line 104) stores only `access_token` in the keychain. Google access tokens expire after 1 hour. Without `refresh_token`, users must re-authenticate every hour -- unacceptable for distribution.
@@ -81,6 +83,8 @@ spawn_claude_session()
   -> inject refreshed token as GOOGLE_ACCESS_TOKEN env var
   -> spawn Claude CLI
 ```
+
+**Corrupted keychain JSON handling (Codex S1):** If `refresh_if_needed` fails to parse the keychain value as JSON (e.g., a plain string from a pre-Phase-4a build, or corrupted data), treat it as "expired with no refresh_token" and return `Err("Google session expired. Please re-authenticate.")`. This is a graceful degradation — the user re-authenticates once, and the new token is stored in the correct JSON format.
 
 **Google OAuth client_id for Rust-side refresh:** The client_id is needed by `token_refresh.rs` to call Google's token endpoint. Rather than adding another parameter to `spawn_claude_session`, embed the client_id in the JSON token payload stored in the keychain (alongside access_token, refresh_token, expires_at). The redirect server already has client_id when it performs the initial exchange -- store it at that point. This keeps the spawn command signature stable and avoids frontend-to-backend plumbing for a value that doesn't change per-session.
 
@@ -163,7 +167,24 @@ Therefore:
 - Claude CLI spawns `npx` on its own -- this is outside our sandbox boundary
 - The `.mcp-config.json` must use absolute `npx` path because Claude CLI inherits the restricted `PATH` from our process
 
-Testing required: verify that Claude CLI can spawn npx/MCP servers when launched from a sandboxed parent process with restricted PATH. If not, we may need to inject the full PATH into Claude CLI's environment.
+**Mandatory: PATH injection into Claude CLI environment (Codex I1)**
+
+Child processes inherit the sandboxed process's restricted PATH. To ensure Claude CLI can find `npx` and `node` when spawning MCP servers, `session_manager.rs` will inject a `PATH` environment variable into the Claude CLI spawn that includes the directories containing the resolved binaries:
+
+```rust
+// In session_manager.rs, before spawning:
+let bin_dirs: HashSet<PathBuf> = [&resolved.claude, &resolved.npx, &resolved.node]
+    .iter()
+    .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
+    .collect();
+let path_value = bin_dirs.iter()
+    .map(|d| d.to_string_lossy())
+    .collect::<Vec<_>>()
+    .join(":");
+command.env("PATH", path_value);
+```
+
+This eliminates the PATH resolution uncertainty. The Claude CLI receives a PATH containing the exact directories where `npx` and `node` live, as resolved by the binary resolver at app startup. No "testing required" -- the behavior is deterministic.
 
 ## 5. Sandbox Entitlements + Capabilities
 
@@ -233,10 +254,39 @@ Replace broad `:default` scopes with specific permissions:
 }
 ```
 
-Specific scoping TBD during implementation:
-- `shell:allow-execute` -- ideally scope to only the resolved `claude` binary path. Tauri 2's shell plugin supports `scope` configuration in `capabilities/` for allowed commands. This must be configured to only allow executing `claude`.
-- `fs:allow-read` / `fs:allow-write` -- scope to `$APPDATA/**` and the workspace root (resolved via Security-Scoped Bookmark). Tauri 2 supports path scope patterns.
-- `http:allow-fetch` -- scope to `https://*.googleapis.com`, `https://*.firebaseio.com`, `https://*.firebaseapp.com`, `https://oauth2.googleapis.com`, `https://accounts.google.com`.
+**Shell scope for `claude` binary (Codex I2):**
+
+Tauri 2's shell plugin uses a `scope` object in the capabilities to restrict which commands can be executed. Define a named command `claude` that the app is allowed to run:
+
+```json
+{
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [{ "name": "claude", "cmd": "", "args": true }]
+    },
+    "fs:allow-read",
+    "fs:allow-write",
+    "sql:default",
+    "http:allow-fetch",
+    "notification:default",
+    "dialog:default",
+    "keyring:default"
+  ]
+}
+```
+
+The `cmd` field is left empty because the actual binary path is resolved at runtime by the binary resolver and passed to `Command::new()` programmatically. The `name: "claude"` acts as a label. The `args: true` allows passing CLI arguments (flags like `--print`, `--output-format`, `--mcp-config`, etc.).
+
+Note: Tauri 2's `shell:allow-execute` with the `sidecar` pattern may be more appropriate if we bundle Claude CLI. Since we rely on the user's installed CLI, the open execute permission with the scope restriction is the correct approach. During implementation, verify the exact Tauri 2 shell scope API against the current plugin version docs.
+
+**FS and HTTP scoping (implementation-time):**
+- `fs:allow-read` / `fs:allow-write` -- scope to `$APPDATA/**` and the workspace root. Exact path patterns depend on Security-Scoped Bookmark integration.
+- `http:allow-fetch` -- scope to `https://*.googleapis.com`, `https://*.firebaseio.com`, `https://*.firebaseapp.com`, `https://oauth2.googleapis.com`, `https://accounts.google.com`. These are lower-risk for Apple rejection than shell permissions.
 
 ### 5.3 CSP Update
 
@@ -252,13 +302,23 @@ connect-src ipc: http://ipc.localhost http://localhost:* https://*.googleapis.co
 
 Under App Sandbox, when the user selects a workspace folder via the native file picker, the app gets temporary access. This access is revoked on app restart. Engagement vault paths (`~/.ikrs-workspace/vaults/{slug}/`) become inaccessible.
 
-### 6.2 Solution
+### 6.2 Solution: `tauri-plugin-persisted-scope` + native bookmark API (Codex I3 — decision made)
 
-**Option A: `tauri-plugin-persisted-scope`** -- Tauri's official plugin that automatically creates and resolves Security-Scoped Bookmarks for paths accessed via `dialog:open`. If this plugin handles our use case (persist folder access selected via dialog), use it.
+**Decision: Option A** — use `tauri-plugin-persisted-scope` v2.3.4+ combined with Tauri 2's native Security-Scoped Bookmark support.
 
-**Option B: Manual bookmark management** -- Use `objc2` crate to call `bookmarkData(options:includingResourceValuesForKeys:relativeTo:)` and `URLByResolvingBookmarkData`. Store bookmark data in app data dir.
+**How it works:**
+- `tauri-plugin-persisted-scope` saves and restores file/folder scope grants across app restarts. It persists the scope metadata in the app data directory.
+- On macOS, Tauri 2 natively supports `startAccessingSecurityScopedResource()` / `stopAccessingSecurityScopedResource()` for macOS sandbox bookmark access.
+- The plugin must be registered **after** `tauri-plugin-fs` in `lib.rs` (ordering matters).
 
-**Preference:** Option A if it works. Investigate during implementation. If `tauri-plugin-persisted-scope` covers folder picker persistence, add it to `Cargo.toml` and wire up in `lib.rs`. If not, implement Option B.
+**Implementation:**
+1. Add `tauri-plugin-persisted-scope = "2"` to `Cargo.toml`
+2. Add `.plugin(tauri_plugin_persisted_scope::init())` in `lib.rs` (after `tauri_plugin_fs::init()`)
+3. Add `"persisted-scope:default"` to `capabilities/default.json`
+4. When user selects workspace folder via `dialog:open`, the persisted-scope plugin automatically saves the grant
+5. On next launch, the plugin restores the grant — workspace folder is accessible without re-prompting
+6. Call `startAccessingSecurityScopedResource()` on the restored bookmark path at startup
+7. Call `stopAccessingSecurityScopedResource()` on app exit to avoid kernel resource leaks
 
 ### 6.3 Bookmark Lifecycle
 
