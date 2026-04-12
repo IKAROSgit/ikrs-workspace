@@ -75,9 +75,30 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Firebase CI placeholders
           VITE_FIREBASE_API_KEY: "ci-placeholder"
           VITE_FIREBASE_AUTH_DOMAIN: "ci.firebaseapp.com"
           VITE_FIREBASE_PROJECT_ID: "ci-project"
           VITE_FIREBASE_STORAGE_BUCKET: "ci.appspot.com"
           VITE_FIREBASE_MESSAGING_SENDER_ID: "000000000"
           VITE_FIREBASE_APP_ID: "1:000:web:000"
+          # macOS code signing (skipped gracefully when secrets not set)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # macOS notarization
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ikrs-workspace-${{ matrix.target }}
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
