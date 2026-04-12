@@ -4,6 +4,7 @@
 **Date:** 2026-04-12
 **Parent spec:** `embedded-claude-architecture.md` (Phase 3)
 **Prior phase:** `m2-phase3b-mcp-wiring-design.md` (complete, Codex 9/10)
+**Codex reviews:** WARN 7/10 → C1/C2/I1-I4/N1-N4 addressed below
 
 ---
 
@@ -72,14 +73,17 @@ export function extractMcpServers(tools: string[]): McpHealth[] {
     type,
     status: "healthy" as const,
     lastPing: new Date(),
+    restartCount: 0,  // Codex N1: satisfy McpHealth.restartCount (required field)
   }));
 }
 ```
 
 **On session disconnect:** Clear mcpStore servers so consumer hooks see `isConnected: false`.
 
-In `claudeStore.setDisconnected`, add:
+Per Codex N2, do NOT add cross-store calls inside `claudeStore.setDisconnected`. Instead, clear mcpStore from the `claude:session-ended` listener in `useClaudeStream.ts`, keeping store coupling in the event-wiring layer:
+
 ```typescript
+// In useClaudeStream.ts, inside claude:session-ended listener
 useMcpStore.getState().setServers([]);
 ```
 
@@ -102,10 +106,12 @@ The `extractMcpServers` function must populate `restartCount: 0` and omit `pid` 
 
 **Discovery:** No OAuth redirect capture server exists. The M1 PKCE flow built `start_oauth` (generates auth URL with PKCE challenge) and `exchange_oauth_code` (exchanges code for tokens), but nothing listens on `http://localhost:{port}/oauth/callback` to capture the redirect. This means re-auth (and initial OAuth) cannot complete end-to-end.
 
+**OAuth client type (Codex C1):** This app uses a **Desktop** type OAuth client ID from Google Cloud Console. Desktop apps use PKCE without a `client_secret` — the existing `exchange_oauth_code` in `commands/oauth.rs` correctly omits it. This is intentional and spec-compliant for Tauri desktop apps.
+
 **Solution:** Add a lightweight one-shot HTTP server in Rust that:
-1. Binds to `localhost:{OAUTH_PORT}` before opening the browser
+1. Tries to bind `localhost:{port}` — if port taken, tries `port+1` through `port+10` (Codex I4: port collision)
 2. Waits for Google's redirect with the auth `code` parameter
-3. Calls the existing `exchange_oauth_code` logic internally
+3. Calls the existing PKCE token exchange logic internally (no `client_secret` — Desktop OAuth)
 4. Stores the token in the keychain via `KeyringExt`
 5. Emits `oauth:token-stored` Tauri event
 6. Serves a "Sign-in complete, you can close this tab" HTML response
@@ -115,19 +121,31 @@ The `extractMcpServers` function must populate `restartCount: 0` and omit `pid` 
 
 ```rust
 /// Spawns a one-shot HTTP server on localhost:{port} to capture the OAuth redirect.
-/// Returns a JoinHandle that resolves when the code is captured and token is stored.
+/// Tries ports port..port+10 if the first is occupied (Codex I4).
+/// Returns (JoinHandle, actual_port) so the auth URL uses the correct redirect_uri.
 pub async fn start_redirect_server(
-    port: u16,
+    preferred_port: u16,
     client_id: String,
     verifier: String,
     keychain_key: String,
     app: AppHandle,
-) -> Result<tokio::task::JoinHandle<Result<(), String>>, String>
+) -> Result<(tokio::task::JoinHandle<Result<(), String>>, u16), String>
 ```
 
 Uses `tokio::net::TcpListener` + minimal HTTP parsing (no framework needed — single GET request with query params). The server handles exactly one request and shuts down.
 
-**New Tauri command:** `start_oauth_flow` — combines `start_oauth` + `start_redirect_server` into one atomic operation:
+**Cancellation (Codex I3):** The `OAuthState` struct is extended to store the pending server handle:
+
+```rust
+pub struct OAuthState {
+    pub pending_verifier: Mutex<Option<String>>,
+    pub pending_server: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
+}
+```
+
+**New Tauri commands:**
+
+`start_oauth_flow` — combines `start_oauth` + `start_redirect_server` into one atomic operation:
 
 ```rust
 #[tauri::command]
@@ -138,10 +156,21 @@ pub async fn start_oauth_flow(
     scopes: Vec<String>,
     state: State<'_, OAuthState>,
     app: AppHandle,
-) -> Result<OAuthStartResult, String>
+) -> Result<OAuthFlowResult, String>
+// Returns { auth_url, actual_port } — actual_port may differ from redirect_port
 ```
 
-This generates the PKCE challenge, starts the redirect server, and returns the auth URL. The redirect server runs in the background and emits `oauth:token-stored` when done.
+`cancel_oauth_flow` — aborts the redirect server if user cancels or timeout fires (Codex I3):
+
+```rust
+#[tauri::command]
+pub async fn cancel_oauth_flow(
+    state: State<'_, OAuthState>,
+) -> Result<(), String>
+// Aborts pending_server JoinHandle, clears pending_verifier
+```
+
+This generates the PKCE challenge, starts the redirect server, and returns the auth URL with the actual bound port. The redirect server runs in the background and emits `oauth:token-stored` when done.
 
 **ChatView re-auth flow (updated):**
 
@@ -170,9 +199,10 @@ const handleReauth = useCallback(async () => {
     );
     await open(auth_url);
 
-    // Safety timeout: 5 minutes
-    setTimeout(() => {
+    // Safety timeout: 5 minutes — cancel redirect server on expiry (Codex I3)
+    setTimeout(async () => {
       unlisten();
+      await cancelOAuthFlow();
       setReauthing(false);
     }, 5 * 60 * 1000);
 
@@ -187,19 +217,57 @@ const handleReauth = useCallback(async () => {
 
 **UX change:** Button shows "Waiting for sign-in..." after clicking. Only reconnects once the redirect server captures the token.
 
-**Frontend command update:** Replace `startOAuth` with `startOAuthFlow` in `tauri-commands.ts`:
+**Frontend command updates** in `tauri-commands.ts` (Codex N4: update import in ChatView too):
+
 ```typescript
+export interface OAuthFlowResult {
+  auth_url: string;
+  actual_port: number;
+}
+
 export async function startOAuthFlow(
   engagementId: string,
   clientId: string,
   redirectPort: number,
   scopes: string[],
-): Promise<OAuthStartResult> {
+): Promise<OAuthFlowResult> {
   return invoke("start_oauth_flow", {
     engagementId, clientId, redirectPort, scopes,
   });
 }
+
+export async function cancelOAuthFlow(): Promise<void> {
+  return invoke("cancel_oauth_flow");
+}
 ```
+
+ChatView import line changes: remove `startOAuth`, add `startOAuthFlow` and `cancelOAuthFlow`.
+
+### 2b. Fix auth-error server inference (Codex C2 — pre-existing bug)
+
+**Problem:** In `stream_parser.rs`, `infer_mcp_server()` is called with `tool_use_id` (opaque ID like `toolu_01A2B3`), not the tool name (like `mcp__gmail__read_message`). The substring matching (`contains("gmail")`) never matches because `tool_use_id` values don't contain server names.
+
+**Fix:** Track a `tool_id → tool_name` mapping. When `claude:tool-start` fires (in `handle_assistant_event`), store `tool_id → tool_name`. When `handle_user_event` processes a `tool_result`, look up the tool name from the map.
+
+Add to `parse_stream`:
+```rust
+let mut tool_name_map: HashMap<String, String> = HashMap::new();
+```
+
+Pass `&mut tool_name_map` to `handle_assistant_event` (to insert) and `handle_user_event` (to lookup).
+
+In `handle_assistant_event`, after emitting `claude:tool-start`:
+```rust
+tool_name_map.insert(tool_id.to_string(), tool_name.to_string());
+```
+
+In `handle_user_event`, replace `infer_mcp_server(tool_id)` with:
+```rust
+let tool_name = tool_name_map.get(tool_id).map(|s| s.as_str()).unwrap_or("");
+let server = infer_mcp_server(tool_name);  // Now matches mcp__gmail__* correctly
+```
+
+Update `infer_mcp_server` to match on tool name prefix patterns (same `mcp__gmail__` pattern as `extractMcpServers`).
 
 ### 3. Strict MCP Config
 
@@ -224,15 +292,24 @@ export interface Engagement {
 
 **Rust command change** in `src-tauri/src/claude/commands.rs`:
 
-Add `strict_mcp: Option<bool>` parameter. When `true` and `has_token` is `false`, return an error instead of spawning without Google MCP servers:
+Add `strict_mcp: Option<bool>` parameter. When `true` and `has_token` is `false` AND this is a fresh spawn (not resume), return an error (Codex I2: skip validation on resume since the session already had MCP context):
 
 ```rust
-if strict_mcp.unwrap_or(false) && !has_token {
+// Only enforce on fresh spawns — resumed sessions already have MCP context (Codex I2)
+if resume_session_id.is_none() && strict_mcp.unwrap_or(false) && !has_token {
     return Err("Strict MCP mode: Google authentication required. Please authenticate before starting this session.".to_string());
 }
 ```
 
-**Frontend:** `useWorkspaceSession.ts` reads `engagement.settings.strictMcp` and passes it to `spawnClaudeSession`.
+**Frontend:** `useWorkspaceSession.ts` reads `engagement.settings.strictMcp` and passes it to `spawnClaudeSession`. All 4 existing call sites add the new param (Codex N3):
+
+```typescript
+await spawnClaudeSession(
+  engagement.id, engagement.vault.path,
+  resumeId ?? undefined, client?.slug,
+  engagement.settings.strictMcp,  // NEW — undefined if not set
+);
+```
 
 **Tauri command signature:**
 ```rust
@@ -241,16 +318,56 @@ pub async fn spawn_claude_session(
     engagement_path: String,
     resume_session_id: Option<String>,
     client_slug: Option<String>,
-    strict_mcp: Option<bool>,  // NEW
+    strict_mcp: Option<bool>,  // NEW — None/false = graceful degradation
     state: State<'_, ClaudeSessionManager>,
     app: AppHandle,
 ) -> Result<String, String>
 ```
 
+**TS command signature** in `tauri-commands.ts`:
+```typescript
+export async function spawnClaudeSession(
+  engagementId: string, engagementPath: string,
+  resumeSessionId?: string, clientSlug?: string,
+  strictMcp?: boolean,  // NEW
+): Promise<string> {
+  return invoke("spawn_claude_session", {
+    engagementId, engagementPath,
+    resumeSessionId: resumeSessionId ?? null,
+    clientSlug: clientSlug ?? null,
+    strictMcp: strictMcp ?? null,
+  });
+}
+```
+
 ### 4. Frontend Tests
 
-**Framework:** Vitest + `@testing-library/react` (already configured)
+**Framework:** Vitest + `@testing-library/react` (configured in `vitest.config.ts`)
 **Location:** `tests/unit/` (follows existing convention)
+
+**Prerequisite (Codex I1):** Create `tests/setup.ts` with Tauri API mocks since stores and hooks import `@tauri-apps/api/event` and `@tauri-apps/api/core`:
+
+```typescript
+// tests/setup.ts
+import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
+
+// Mock Tauri core invoke
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+// Mock Tauri event system
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
+}));
+
+// Mock Tauri plugin opener
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  open: vi.fn(),
+}));
+```
 
 **Test files to create:**
 
@@ -260,6 +377,7 @@ pub async fn spawn_claude_session(
    - Deduplicates (multiple gmail tools → one entry)
    - Returns empty array for no MCP tools
    - Ignores unknown MCP prefixes
+   - Each result has `restartCount: 0` and `status: "healthy"`
 
 2. **`tests/unit/stores/mcpStore.test.ts`** — store tests:
    - `setServers` populates server list
@@ -291,17 +409,18 @@ pub async fn spawn_claude_session(
 | File | Action | Description |
 |------|--------|-------------|
 | `src/lib/mcp-utils.ts` | CREATE | `extractMcpServers` utility |
-| `src/hooks/useClaudeStream.ts` | MODIFY | Wire session-ready → mcpStore |
-| `src/stores/claudeStore.ts` | MODIFY | Clear mcpStore on disconnect |
-| `src/views/ChatView.tsx` | MODIFY | Two-step re-auth with event listener |
+| `src/hooks/useClaudeStream.ts` | MODIFY | Wire session-ready → mcpStore, clear on session-ended (N2) |
+| `src/views/ChatView.tsx` | MODIFY | Two-step re-auth with event listener + cancel (N4: update imports) |
 | `src/types/index.ts` | MODIFY | Add `strictMcp?` to Engagement.settings |
-| `src/lib/tauri-commands.ts` | MODIFY | Replace `startOAuth` with `startOAuthFlow`, add `strictMcp` param |
-| `src/hooks/useWorkspaceSession.ts` | MODIFY | Pass strictMcp to spawn |
+| `src/lib/tauri-commands.ts` | MODIFY | Add `startOAuthFlow`, `cancelOAuthFlow`, `strictMcp` param |
+| `src/hooks/useWorkspaceSession.ts` | MODIFY | Pass strictMcp to all 4 spawn call sites (N3) |
 | `src-tauri/src/oauth/redirect_server.rs` | CREATE | One-shot HTTP server for OAuth redirect capture |
 | `src-tauri/src/oauth/mod.rs` | MODIFY | Add `pub mod redirect_server;` |
-| `src-tauri/src/commands/oauth.rs` | MODIFY | Add `start_oauth_flow` command combining PKCE + redirect server |
-| `src-tauri/src/claude/commands.rs` | MODIFY | Add strict_mcp param + validation |
-| `src-tauri/src/lib.rs` | MODIFY | Register `start_oauth_flow` command |
+| `src-tauri/src/commands/oauth.rs` | MODIFY | Add `start_oauth_flow` + `cancel_oauth_flow`, extend `OAuthState` |
+| `src-tauri/src/claude/commands.rs` | MODIFY | Add `strict_mcp` param + validation (skip on resume, I2) |
+| `src-tauri/src/claude/stream_parser.rs` | MODIFY | Fix tool_id→tool_name mapping for auth-error detection (C2) |
+| `src-tauri/src/lib.rs` | MODIFY | Register `start_oauth_flow` + `cancel_oauth_flow` commands |
+| `tests/setup.ts` | CREATE | Tauri API mocks for Vitest (I1) |
 | `tests/unit/lib/mcp-utils.test.ts` | CREATE | extractMcpServers tests |
 | `tests/unit/stores/mcpStore.test.ts` | CREATE | mcpStore tests |
 | `tests/unit/stores/claudeStore-auth.test.ts` | CREATE | Auth-error state tests |
