@@ -21,6 +21,14 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost http://localhost:* https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com; img-src 'self' data: https:"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/IKAROSgit/ikrs-workspace/releases/latest/download/latest.json"
+      ],
+      "pubkey": "GENERATED_PUBLIC_KEY_HERE"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -35,7 +43,13 @@
       "minimumSystemVersion": "12.0",
       "entitlements": "entitlements.plist",
       "signingIdentity": "-",
-      "frameworks": []
+      "frameworks": [],
+      "dmg": {
+        "background": "icons/dmg-background.png",
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 }
+      }
     },
     "category": "public.app-category.business"
   }

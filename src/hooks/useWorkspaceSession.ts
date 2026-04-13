@@ -38,6 +38,13 @@ export function useWorkspaceSession() {
   const [switching, setSwitching] = useState(false);
 
   const connect = useCallback(async () => {
+    if (!navigator.onLine) {
+      useClaudeStore.getState().setError(
+        "Unable to reach Claude. Check your internet connection and try again."
+      );
+      return;
+    }
+
     const engagement = useEngagementStore.getState().engagements.find(
       (e) => e.id === useEngagementStore.getState().activeEngagementId
     );
@@ -93,6 +100,14 @@ export function useWorkspaceSession() {
 
   const switchEngagement = useCallback(async (newEngagementId: string) => {
     if (switching) return;
+
+    if (!navigator.onLine) {
+      useClaudeStore.getState().setError(
+        "Unable to reach Claude. Check your internet connection and try again."
+      );
+      return;
+    }
+
     setSwitching(true);
 
     try {

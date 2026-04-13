@@ -9,7 +9,9 @@ import {
 } from "lucide-react";
 import { useNotes } from "@/hooks/useNotes";
 import { useEngagementStore } from "@/stores/engagementStore";
+import { useClaudeStore } from "@/stores/claudeStore";
 import { archiveVault, restoreVault } from "@/lib/tauri-commands";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 export default function NotesView() {
   const { files, loading, error, isConnected, refresh } = useNotes();
@@ -19,6 +21,7 @@ export default function NotesView() {
   );
   const clients = useEngagementStore((s) => s.clients);
   const client = clients.find((c) => c.id === engagement?.clientId);
+  const claudeStatus = useClaudeStore((s) => s.status);
 
   if (!activeEngagementId || !engagement) {
     return (
@@ -33,6 +36,12 @@ export default function NotesView() {
 
   return (
     <div className="flex flex-col h-full">
+      <OfflineBanner feature="Notes (Obsidian MCP)" />
+      {claudeStatus !== "connected" && (
+        <div className="px-4 py-2 bg-muted text-muted-foreground text-sm border-b border-border">
+          Notes require an active Claude session. Connect to Claude to access vault files.
+        </div>
+      )}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">
           Notes — {client?.name ?? "Unknown Client"}

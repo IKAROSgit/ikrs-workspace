@@ -3,6 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCw, Calendar, CalendarPlus } from "lucide-react";
 import { useCalendar } from "@/hooks/useCalendar";
 import { useEngagementStore } from "@/stores/engagementStore";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 export default function CalendarView() {
   const { events, loading, error, isConnected, refresh } = useCalendar();
@@ -28,6 +29,7 @@ export default function CalendarView() {
 
   return (
     <div className="flex flex-col h-full">
+      <OfflineBanner feature="Google Calendar" />
       <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">Calendar</h2>
         <div className="flex gap-1">

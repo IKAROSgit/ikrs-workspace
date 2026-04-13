@@ -3,6 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCw, Mail, MailOpen } from "lucide-react";
 import { useGmail } from "@/hooks/useGmail";
 import { useEngagementStore } from "@/stores/engagementStore";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 export default function InboxView() {
   const { emails, loading, error, isConnected, refresh } = useGmail();
@@ -28,6 +29,7 @@ export default function InboxView() {
 
   return (
     <div className="flex flex-col h-full">
+      <OfflineBanner feature="Gmail" />
       <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">Inbox</h2>
         <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>

@@ -12,6 +12,8 @@ import { useEngagementActions } from "@/providers/EngagementProvider";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { startOAuthFlow, cancelOAuthFlow, scaffoldEngagementSkills } from "@/lib/tauri-commands";
 import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
+import { UpdateChecker } from "@/components/UpdateChecker";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import type { SkillUpdateParams } from "@/types/skills";
 
 const GOOGLE_SCOPES = [
@@ -35,6 +37,7 @@ export default function SettingsView() {
   const [engagementTitle, setEngagementTitle] = useState("");
   const [engagementDesc, setEngagementDesc] = useState("");
   const [creating, setCreating] = useState(false);
+  const isOnline = useOnlineStatus();
   const [oauthStatus, setOauthStatus] = useState<
     "idle" | "pending" | "success" | "error"
   >("idle");
@@ -230,7 +233,8 @@ export default function SettingsView() {
             <>
               <Button
                 onClick={handleConnectGoogle}
-                disabled={oauthStatus === "pending"}
+                disabled={oauthStatus === "pending" || !isOnline}
+                title={!isOnline ? "Sign in requires internet." : undefined}
               >
                 {oauthStatus === "pending"
                   ? "Connecting..."
@@ -254,6 +258,15 @@ export default function SettingsView() {
       {activeEngagementId && (
         <SkillStatusPanel updateParams={skillUpdateParams} />
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>About</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <UpdateChecker />
+        </CardContent>
+      </Card>
     </div>
   );
 }

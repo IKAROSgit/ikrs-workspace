@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useDrive } from "@/hooks/useDrive";
 import { useEngagementStore } from "@/stores/engagementStore";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 function FileIcon({ mimeType }: { mimeType: string }) {
   if (mimeType.startsWith("image/"))
@@ -52,6 +53,7 @@ export default function FilesView() {
 
   return (
     <div className="flex flex-col h-full">
+      <OfflineBanner feature="Google Drive" />
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
         <div className="relative flex-1">
           <Search

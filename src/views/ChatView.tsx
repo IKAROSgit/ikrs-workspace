@@ -9,6 +9,8 @@ import { useClaudeStream } from "@/hooks/useClaudeStream";
 import { useClaudeStore } from "@/stores/claudeStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { OfflineBanner } from "@/components/OfflineBanner";
 import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession } from "@/lib/tauri-commands";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,6 +38,7 @@ export default function ChatView() {
   const clearAuthError = useClaudeStore((s) => s.clearAuthError);
 
   const { connect: handleConnect, switching } = useWorkspaceSession();
+  const isOnline = useOnlineStatus();
 
   const [reauthing, setReauthing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -113,18 +116,22 @@ export default function ChatView() {
   // Not connected yet
   if (status === "disconnected" && !error) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
-        <Bot size={48} className="text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          Start a Claude session for this engagement
-        </p>
-        <Button onClick={handleConnect}>Connect to Claude</Button>
+      <div className="flex flex-col h-full">
+        <OfflineBanner feature="Claude" />
+        <div className="flex flex-col items-center justify-center flex-1 gap-4">
+          <Bot size={48} className="text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Start a Claude session for this engagement
+          </p>
+          <Button onClick={handleConnect} disabled={!isOnline} title={!isOnline ? "Requires internet connection." : undefined}>Connect to Claude</Button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full">
+      <OfflineBanner feature="Claude" />
       <SessionIndicator status={status} model={model} costUsd={totalCostUsd} switching={switching} />
 
       {/* Messages area */}
@@ -142,7 +149,11 @@ export default function ChatView() {
 
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-            <span>{error}</span>
+            <span>
+              {!isOnline
+                ? "Connection interrupted. Your work is saved locally."
+                : error}
+            </span>
             <Button
               variant="outline"
               size="sm"

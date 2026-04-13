@@ -16,6 +16,7 @@
     "http:allow-fetch",
     "notification:default",
     "dialog:default",
-    "keyring:default"
+    "keyring:default",
+    "updater:default"
   ]
 }
