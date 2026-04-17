@@ -48,20 +48,27 @@ Eliminate the daily redundant manual overhead of timesheet administration for co
 Monthly timesheet approval (M3) and full workstation/vault view (M4) both require the same external client user to authenticate against the IKAROS Firebase project. Deferring the auth decision to M4 would force a re-architecture. Therefore M3 ships the auth primitive:
 
 - **IAM:** Firebase Auth with `client` custom claim. Consultants invite client users via email; invite creates a Firebase user with claim `{role: "client", engagementIds: [...]}`.
-- **Firestore rules:** a client user can `read` only documents where `engagementId in request.auth.token.engagementIds` AND the document is explicitly flagged `clientVisible == true`. No writes for clients in M3.
+- **Custom-claim writer** (Codex MC-1 close): a new Cloud Function **`invite-client-user`** — the desktop app MUST NOT hold the Firebase Admin SDK key. Location: `packages/ikaros-command-center/src/app/api/clients/invite/route.ts` (follows the auth-middleware template at `packages/ikaros-command-center/src/app/api/donna/chat/route.ts:106`). Input: `{engagementId, clientEmail, clientName?}` + consultant's Firebase ID token in `Authorization` header. Middleware verifies the consultant owns the engagement. Function uses Firebase Admin SDK to create the user (or `updateUser` if they already exist) and set/merge the `engagementIds` custom claim. Returns a Firebase Auth sign-in link for the client to use on first login.
+- **Firestore rules:** a client user can `read` only documents where `engagementId in request.auth.token.engagementIds` AND the document is explicitly flagged `clientVisible == true`. No writes for clients in M3 (M4 adds approve/reject via a separate Cloud Function, never direct Firestore writes).
 - **M3 client-side read:** the one document type M3 exposes to the client is `timesheetSubmissions/{id}` — the consolidated monthly submission, flipping `clientVisible = true` on submit.
 - **M3 does not ship** a client-facing UI. It ships the data + auth primitive that M4's portal will read.
 - **M4 extends** the same auth primitive to read vaults via Drive ACLs (client's Google account granted per-engagement Drive folder access) + an in-portal live view.
 
-### AD-2: Narrative model is Gemini Flash via OpenClaw, Haiku as a future tier knob
+### AD-2: Narrative generation goes through a server-side Cloud Function, NEVER from the desktop app directly (Codex MC-2 close)
 
-Gemini Flash (free AI Studio tier, routed via OpenClaw `google/` prefix per CLAUDE.md Golden Rule §Model Prefix) is the M3 default for hourly narrative generation. Rationale:
+The prior draft of AD-2 suggested the desktop app call Gemini directly with the `GEMINI_API_KEY` compiled in. **This is the Vertex-billing-leak pattern** (CLAUDE.md Golden Rule §Model Prefix; historical incident § Mistake 9): any secret compiled into a distributed binary can be extracted with `strings` and abused against our free-tier account. The other hedge — "route via the OpenClaw gateway on elara-vm" — also fails because OpenClaw binds loopback-only (`~/.openclaw/openclaw.json`) and the VM is not publicly addressable.
 
-- Free at projected volume (~8 narratives × 30 days × 1 consultant = 240 calls/month — well inside AI Studio's 250 RPD flash limit).
-- Fast (sub-second) — matches the "chore goes away" bar.
-- Hallucination mitigation is the monthly-review-by-consultant + client-approval-gate flow, not model choice. Flash is good enough.
+**Correct design: a new `narrative-generate` Cloud Function (or Next.js route) on `ikaros-command-center`.** The desktop app authenticates with a Firebase Auth ID token (reusing AD-1's primitive) and sends the bucketed activity events; the server holds the AI Studio key in Secret Manager, calls Gemini REST, returns the structured narrative.
 
-Haiku appears as a **config knob** (`engagement.narrativeModel: 'flash' | 'haiku'`) for engagements where the consultant wants lower hallucination, accepting paid cost. Default remains `flash`. Haiku is NOT routed through OpenClaw — it would use the Anthropic API directly, inheriting the existing IKAROS billing posture (paid, acceptable for this tier).
+- **Location:** `packages/ikaros-command-center/src/app/api/narratives/generate/route.ts`. Template to follow: `packages/ikaros-command-center/src/app/api/donna/chat/route.ts` (already validates a Firebase ID token, already reads secrets server-side, already writes to Firestore with the Admin SDK).
+- **Input:** `{engagementId, hourStart: ISO, events: ActivityEvent[], model: 'flash' | 'haiku'}` + `Authorization: Bearer <firebase-id-token>` header.
+- **Middleware:** verifies the caller's ID token, verifies the `consultantId` in the token owns the engagement referenced (Firestore read under Admin SDK privileges).
+- **Key handling:** AI Studio `GEMINI_API_KEY` read from GCP Secret Manager `openclaw-gemini-api-key` (already exists per CLAUDE.md § Secrets Posture). The Anthropic API key (used for the Haiku knob) from Secret Manager `anthropic-api-key`. Neither touches the binary.
+- **Output:** `{narrative, confidence: 'high'|'medium'|'low', sourceEventIds}`. Server writes the `NarrativeEntry` to Firestore; returns it to the desktop app for immediate UI render.
+- **Model routing:** Flash is default. Haiku is selected per-engagement via `engagement.narrativeModel` (Firestore field). The routing decision lives inside the Cloud Function — the desktop app only passes the engagement's configured `model` value and trusts the server to enforce.
+- **Rate-limit posture:** Flash free tier is 250 RPD. Projected volume ~8/day/consultant. At 10 consultants, we approach the limit; function falls back to Haiku on 429 with an audit-logged event so the consultant knows.
+
+Hallucination mitigation remains the monthly-review-by-consultant + client-approval-gate flow, independent of model choice. Model choice (Flash vs Haiku) is a quality-vs-cost dial, not a security or correctness dial.
 
 ### AD-3: Capture is strict opt-in at every layer
 
@@ -76,7 +83,7 @@ Implications:
 - If `captureEnabled = false`, no background agents emit signals. No events land in SQLite. No narrative entries generate for that period.
 - The monthly consolidation shows explicit "capture paused — no activity recorded for this period" entries where applicable. Transparent to the consultant and, on submit, to the client.
 
-### AD-4: Token usage IS a new subsystem (Codex C3 close)
+### AD-4: Token usage IS a new subsystem, with per-engagement signal gate (Codex C3 + MC-4 close)
 
 The scope lock claimed "poll the Claude CLI for token usage" as if it were a harvest of existing data. Codex verified: `src-tauri/src/claude/types.rs:45` declares an `AssistantMessage.usage` field but `src-tauri/src/claude/stream_parser.rs` never emits it to listeners. Token usage is a **new subsystem in Phase 3a**, not a poll:
 
@@ -84,18 +91,47 @@ The scope lock claimed "poll the Claude CLI for token usage" as if it were a har
 - Backend aggregator in a new module `src-tauri/src/timesheet/token_aggregator.rs` bins events into 15-minute wall-clock buckets per engagement.
 - Frontend subscribes via `listen('claude:token-usage', ...)` in a new `useTokenUsage` hook.
 
-### AD-5: Storage locus per signal class
+**Per-engagement signal gate (Codex MC-4):** when a consultant multitasks across two engagements in the same hour, the majority-owner-hour rule (AD-6) picks an owning engagement for the narrative, but signals from the *other* engagement must NOT leak into that narrative — that's a cross-client NDA breach. The aggregator therefore enforces a hard filter at two points:
+
+1. **At SQLite write time.** Every `ActivityEvent` row carries `engagementId`; writes are rejected if the event was emitted while a different engagement was the active session. The stream parser's source tagging decides this — never the bucketer.
+2. **At bucketer-to-narrative handoff.** The `narrative-generate` Cloud Function (AD-2) is invoked per-engagement with only the subset of events tagged for that engagement. Even if events from engagement A and engagement B fall in the same hour, A's narrative is generated from A's events only; B's is generated from B's. Never joined.
+
+This gate is the single most important correctness property in M3 — violating it exports client-confidential data across engagement boundaries. Phase 3a test suite must include an adversarial "concurrent engagements in same hour" test case that fails if any event crosses engagements.
+
+### AD-5: Storage locus per signal class (Codex MC-5 close)
 
 | Data | Storage | Retention | Why |
 |------|---------|-----------|-----|
-| Raw activity events (token usage buckets, MCP tool events, file watcher events, session start/stop) | SQLite local (new table per class in existing `ikrs.db`) | 90 days rolling | High volume, low per-event value; local keeps privacy posture high and offline capture possible. |
-| Hourly narrative entries | Firestore `engagements/{id}/narratives/{hourStart}` | Indefinite while engagement active | Cross-device sync, consultant edits from any Mac. |
+| Raw activity events (token usage buckets, MCP tool events, file watcher events, session start/stop) | **SQLite local only — never Firestore** | 90 days rolling | High volume, low per-event value; local-only keeps privacy posture high and offline capture possible. PDPL/NDA exposure is minimised because raw captured content never leaves the consultant's machine. |
+| Bucketer-to-server ephemeral payload | Transient — in-memory only during the `narrative-generate` Cloud Function call | Not stored | AD-2's function receives events as input, generates the narrative, and does NOT persist the raw events anywhere on the server. Only the summarised narrative lands in Firestore. |
+| Hourly narrative entries (summarised only) | Firestore `engagements/{id}/narratives/{hourStart}` | Indefinite while engagement active | Cross-device sync, consultant edits from any Mac. |
 | Consolidated monthly timesheet submissions | Firestore `timesheetSubmissions/{submissionId}` | Indefinite (legal / billing retention) | Shared with client portal in M4, audit trail. |
 | Vault markdown (per ADR-013 Phase 4d) | Drive-synced filesystem, unchanged by M3 | Per engagement lifecycle | Existing model. M3 does not touch vault content. |
 
-### AD-6: Monthly cycle is calendar-month-by-default, per-engagement override
+**Firestore rule implication** (supersedes the earlier draft's contradiction): there are no Firestore rules for raw activity events because raw events are never written to Firestore. Rules cover `narratives/*`, `timesheetSubmissions/*`, and `submissionEvents/*` (audit log — see AD-7) only.
+
+### AD-6: Monthly cycle is calendar-month-by-default, per-engagement override, **consultant-local timezone anchor** (Codex MC-3 close)
 
 M3 ships calendar-month billing (1st–end of month, consultant's local timezone) as default. Engagement record gains `billingPeriod: { kind: 'calendar-month' } | { kind: 'custom', startDate, lengthDays }` to support clients on different cycles without re-architecting. Custom cycles are M3.3d polish, not 3a.
+
+**Timezone anchor decision (locked here, not deferred to phase spec):** All `hourStart` keys in `NarrativeEntry` and all billing-period boundaries in `TimesheetSubmission` are **consultant-local wall-clock** at the time the event is recorded. Each submission carries an IANA timezone string (e.g. `Asia/Dubai`) captured at submission time. Implications:
+
+- A consultant traveling from Dubai (UTC+4) to London (UTC+0) during a month sees hour buckets keyed to wherever they were when working. Monthly submission cites the submission-time timezone; hourly entries retain their at-recording timezone in metadata.
+- Migration-incompatible re-keying is avoided because once written, `hourStart` is immutable.
+- Client-facing display (M4 portal) uses the consultant's submission-time timezone for aggregate display, but a tooltip can show the raw per-entry timezone for audit clarity.
+- Timezone logic lives in a single Rust helper `src-tauri/src/timesheet/time_anchor.rs` — avoids scattered `chrono` calls with inconsistent TZ handling.
+
+### AD-7: Audit log immutability via Firestore rules + append-only sub-collection
+
+Every state transition on a `TimesheetSubmission` (draft → submitted → approved/rejected/revised) produces a row in `timesheetSubmissions/{id}/events/{eventId}` sub-collection. Rules posture (enforced in `firestore.rules`):
+
+- **`create` allowed** — consultant creates submission/revision events; client creates approval/rejection events (via M4 Cloud Function, never direct write).
+- **`update` denied** — no one, ever, can modify a past event record. Mutations happen by appending a new event, not editing an old one.
+- **`delete` denied** — full retention.
+
+The parent `TimesheetSubmission.state` is a materialised view of the event log — kept in sync by the same Cloud Function that writes each event. If the state and the event log ever disagree, the event log wins (authoritative).
+
+This closes Codex's "audit-log immutability promised but mechanism unnamed" finding. The mechanism is plain Firestore rules (`allow update: if false; allow delete: if false;`) on the sub-collection, plus a Cloud Function that owns the transition semantics.
 
 ---
 
@@ -126,7 +162,7 @@ M3 ships calendar-month billing (1st–end of month, consultant's local timezone
 
 **Scope (in):**
 - Hourly bucketer — reads SQLite activity events, groups into wall-clock hours, applies majority-owner rule for straddlers.
-- Flash client — routed via existing OpenClaw/AI Studio setup (verify the VM-side gateway can be called from a desktop-app client; likely the app calls Gemini directly using the existing `GEMINI_API_KEY`, with OpenClaw used only on server side).
+- Flash client wraps a call to the new `narrative-generate` Cloud Function (per AD-2) — desktop app sends Firebase ID token + bucketed events, server holds the AI Studio key and does the Gemini REST call. No secret touches the binary.
 - Prompt template — conservative, signal-citation, explicit-uncertainty. Output schema is `{ narrative: string, confidence: 'high' | 'medium' | 'low', sourceEvents: eventId[] }`.
 - Firestore write of narrative entries.
 - Backfill for engagement-has-consent-but-no-narratives-yet case.
@@ -235,7 +271,7 @@ TimesheetSubmission (new, Firestore)
 
 1. Exact SQLite schema column types + indexes for query patterns.
 2. Consent flow modal copy — needs legal review for PDPL compliance (Phase 3a).
-3. Hourly bucket timezone anchor — consultant-local vs. UTC vs. per-engagement-configured (Phase 3b).
+3. ~~Hourly bucket timezone anchor — consultant-local vs. UTC vs. per-engagement-configured (Phase 3b).~~ **Resolved in AD-6 amendment 2026-04-17:** consultant-local wall-clock, IANA TZ string stored per submission.
 4. Flash prompt template — will iterate during 3b implementation.
 5. Review UI layout — table vs. timeline vs. calendar view (Phase 3c).
 6. Export PDF template design — use the ui-ux-pro-max skill when on Mac for the visual polish (Phase 3d).
@@ -258,7 +294,22 @@ From `.output/codex-reviews/2026-04-17-m3-scope-lock-review.md`:
 | C6 | Q4 (Flash vs Haiku) affects hallucination claim | **Closed** — AD-2 locks Flash default + Haiku knob (Moe's pick: Flash). |
 | C7 | Flash vs Haiku hallucination posture | **Closed** — AD-2 + Risks table enumerate narrative-conservative design (prompt, confidence, review gate). |
 
-All Codex conditions on the scope lock are addressed. This spec is the input to Phase 3a spec writing.
+## Codex Conditions From M3 Milestone Spec Review — Status
+
+From `.output/codex-reviews/2026-04-17-m3-milestone-spec-review.md` (9/10 APPROVED WITH CONDITIONS):
+
+| # | Finding | Status in this spec |
+|---|---------|---------------------|
+| MC-1 | Custom-claims writer unspecified ("backend" is vague; desktop app cannot hold Admin SDK) | **Closed** — AD-1 now names `invite-client-user` Cloud Function at `packages/ikaros-command-center/src/app/api/clients/invite/route.ts`, following the existing auth-middleware template. |
+| MC-2 | Gemini routing: neither "compile key into binary" nor "call OpenClaw on loopback VM" is safe | **Closed** — AD-2 fully rewritten: `narrative-generate` Cloud Function on ikaros-command-center, key in Secret Manager, desktop app uses Firebase ID token. Template: `donna/chat/route.ts`. |
+| MC-3 | Timezone anchor is strategic, not phase-later | **Closed** — AD-6 locks consultant-local wall-clock + IANA TZ per submission. |
+| MC-4 | Cross-engagement NDA leak risk at narrative bucketer | **Closed** — AD-4 amended with per-engagement signal gate at two points (SQLite write + Cloud Function invocation). Phase 3a test suite must include adversarial concurrent-engagements test. |
+| MC-5 | AD-5 contradicted itself (Firestore rule for raw events that never land there) | **Closed** — AD-5 table rewritten: raw events are SQLite-local-only forever; bucketer-to-server payload is transient in-memory; no Firestore rules for raw events. |
+| AD-7 | Audit-log immutability promised, mechanism unnamed | **Closed** — New AD-7 specifies append-only sub-collection with Firestore rules `allow update: if false; allow delete: if false;` + state-machine-owning Cloud Function. |
+| MC-6 | Rate-limit cascade (Flash quota exhaust mid-day) | Folded into AD-2 rate-limit posture paragraph (fall back to Haiku on 429, audit-log the transition). |
+| MC-7 | Consultant-in-dispute-with-client scenario | Addressed by AD-7 audit log + "frozen on submit" narrative rule in Risks table. Revisions produce new submission versions, never edit prior. |
+
+All 14 Codex-surfaced conditions (7 from scope-lock review + 7 from milestone-spec review) are now addressed. Phase 3a spec writing can proceed.
 
 ## What Happens After This Spec Ships
 
