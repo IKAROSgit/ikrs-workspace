@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { homeDir } from "@tauri-apps/api/path";
+import { homeDir, join } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
@@ -71,7 +71,14 @@ export default function SettingsView() {
     try {
       const slug = clientDomain.replace(/\./g, "-").toLowerCase();
       const home = await homeDir();
-      const vaultPath = `${home}.ikrs-workspace/vaults/${slug}/`;
+      // Codex S6 (2026-04-17): `${home}.ikrs-workspace/…` produces
+      // `/Users/<user>.ikrs-workspace/…` on macOS because `homeDir()`
+      // returns without a trailing slash. Use path.join to normalise
+      // platform-correctly. Trailing slash re-appended because downstream
+      // Rust (validate_engagement_path, vault scaffolders) expects the
+      // vault path to end with `/`.
+      const joined = await join(home, ".ikrs-workspace", "vaults", slug);
+      const vaultPath = joined.endsWith("/") ? joined : `${joined}/`;
 
       const clientId = await createClient({
         name: clientName,
