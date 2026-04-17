@@ -21,11 +21,22 @@ pub struct OAuthFlowResult {
 pub async fn start_oauth_flow(
     engagement_id: String,
     client_id: String,
+    client_secret: String,
     redirect_port: u16,
     scopes: Vec<String>,
     state: State<'_, OAuthState>,
     app: AppHandle,
 ) -> Result<OAuthFlowResult, String> {
+    if client_id.trim().is_empty() {
+        return Err("client_id must not be empty".to_string());
+    }
+    if client_secret.trim().is_empty() {
+        return Err(
+            "client_secret must not be empty — set VITE_GOOGLE_OAUTH_CLIENT_SECRET in .env.local (Google Desktop-app OAuth requires the secret at the token endpoint even with PKCE)"
+                .to_string(),
+        );
+    }
+
     // Cancel any pending flow
     {
         let mut pending = state.pending_server.lock().map_err(|e| e.to_string())?;
@@ -49,6 +60,7 @@ pub async fn start_oauth_flow(
     let (handle, actual_port) = crate::oauth::redirect_server::start_redirect_server(
         redirect_port,
         client_id.clone(),
+        client_secret,
         challenge.verifier,
         keychain_key,
         app,

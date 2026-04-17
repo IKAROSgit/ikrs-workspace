@@ -233,50 +233,26 @@ pub async fn start_identity_redirect_server(
         let _ = stream.write_all(response.as_bytes()).await;
         drop(stream);
 
-        // Exchange code → tokens.
-        //
-        // Google's Desktop-app OAuth clients REQUIRE `client_secret` at
-        // the token endpoint even when PKCE is used. Per Google's own
-        // docs (https://developers.google.com/identity/protocols/oauth2/native-app)
-        // the Desktop client_secret is explicitly "not treated as a
-        // secret" — embedding it in a distributed binary is the
-        // expected pattern. PKCE remains in place as additional
-        // protection against code interception; it does not replace
-        // the secret parameter.
-        //
-        // Our earlier implementation omitted client_secret on the
-        // incorrect belief that Desktop + PKCE was sufficient. Google
-        // returned `invalid_request: client_secret is missing.` on
-        // every attempt. Fix: include it. See
-        // docs/specs/m2-phase4e-firebase-identity-signin-design.md
-        // Amendment 2026-04-17 for the full retrospective.
+        // Exchange code → tokens via the shared token_exchange module.
+        // See `docs/specs/m2-phase4e-firebase-identity-signin-design.md`
+        // Amendment 2026-04-17 for the client_secret rationale. The
+        // regression-guard test in `oauth::token_exchange` prevents a
+        // future refactor from silently dropping the secret again.
         let redirect_uri = format!("http://localhost:{actual_port}/oauth/callback");
-        let http_client = reqwest::Client::new();
-        let resp = match http_client
-            .post("https://oauth2.googleapis.com/token")
-            .form(&[
-                ("code", code.as_str()),
-                ("client_id", client_id.as_str()),
-                ("client_secret", client_secret.as_str()),
-                ("redirect_uri", redirect_uri.as_str()),
-                ("grant_type", "authorization_code"),
-                ("code_verifier", verifier.as_str()),
-            ])
-            .send()
-            .await
+        let json = match crate::oauth::token_exchange::exchange_authorization_code(
+            crate::oauth::token_exchange::AuthorizationCodeRequest {
+                endpoint: "https://oauth2.googleapis.com/token",
+                client_id: &client_id,
+                client_secret: &client_secret,
+                redirect_uri: &redirect_uri,
+                code: &code,
+                verifier: &verifier,
+            },
+        )
+        .await
         {
-            Ok(r) => r,
-            Err(e) => return fail(format!("Token exchange request failed: {e}")).await,
-        };
-
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return fail(format!("Token exchange HTTP error: {body}")).await;
-        }
-
-        let json: serde_json::Value = match resp.json().await {
             Ok(j) => j,
-            Err(e) => return fail(format!("Token endpoint returned non-JSON: {e}")).await,
+            Err(e) => return fail(e).await,
         };
 
         let id_token = match json["id_token"].as_str() {

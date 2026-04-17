@@ -26,12 +26,14 @@ export interface OAuthFlowResult {
 export async function startOAuthFlow(
   engagementId: string,
   clientId: string,
+  clientSecret: string,
   redirectPort: number,
   scopes: string[],
 ): Promise<OAuthFlowResult> {
   return invoke("start_oauth_flow", {
     engagementId,
     clientId,
+    clientSecret,
     redirectPort,
     scopes,
   });

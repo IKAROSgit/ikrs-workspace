@@ -21,6 +21,7 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
 ];
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
+const OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";
 const OAUTH_PORT = 49152;
 
 export default function ChatView() {
@@ -85,6 +86,7 @@ export default function ChatView() {
       const { auth_url } = await startOAuthFlow(
         activeEngagementId!,
         OAUTH_CLIENT_ID,
+        OAUTH_CLIENT_SECRET,
         OAUTH_PORT,
         GOOGLE_SCOPES
       );

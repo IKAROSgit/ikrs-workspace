@@ -48,6 +48,7 @@ h1{color:#22c55e;font-size:1.5rem}p{color:#666}</style></head>
 pub async fn start_redirect_server(
     preferred_port: u16,
     client_id: String,
+    client_secret: String,
     verifier: String,
     keychain_key: String,
     app: AppHandle,
@@ -79,28 +80,23 @@ pub async fn start_redirect_server(
         let _ = stream.write_all(response.as_bytes()).await;
         drop(stream);
 
-        // Exchange code for tokens (PKCE, no client_secret -- Desktop OAuth)
+        // Exchange code for tokens via the shared token_exchange module.
+        // That module owns the full request shape (including client_secret —
+        // the bug class that shipped twice 2026-04-17). Its unit tests
+        // include a regression guard that would fail CI if a future
+        // refactor drops a required field.
         let redirect_uri = format!("http://localhost:{actual_port}/oauth/callback");
-        let http_client = reqwest::Client::new();
-        let resp = http_client
-            .post("https://oauth2.googleapis.com/token")
-            .form(&[
-                ("code", code.as_str()),
-                ("client_id", client_id.as_str()),
-                ("redirect_uri", redirect_uri.as_str()),
-                ("grant_type", "authorization_code"),
-                ("code_verifier", verifier.as_str()),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("Token exchange failed: {e}"))?;
-
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Token exchange error: {body}"));
-        }
-
-        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let json = crate::oauth::token_exchange::exchange_authorization_code(
+            crate::oauth::token_exchange::AuthorizationCodeRequest {
+                endpoint: "https://oauth2.googleapis.com/token",
+                client_id: &client_id,
+                client_secret: &client_secret,
+                redirect_uri: &redirect_uri,
+                code: &code,
+                verifier: &verifier,
+            },
+        )
+        .await?;
         let access_token = json["access_token"]
             .as_str()
             .ok_or("Missing access_token")?

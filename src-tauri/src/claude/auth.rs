@@ -91,20 +91,11 @@ pub async fn claude_auth_status(
 }
 
 /// Initiate Claude CLI login (opens system browser for OAuth).
+/// Same resolution strategy as the other two commands.
 #[tauri::command]
 pub async fn claude_auth_login(
     resolved: State<'_, ResolvedBinaries>,
 ) -> Result<(), String> {
-    // Same symmetry as claude_auth_status — fail with a clear
-    // installation error instead of a spawn error when the resolver
-    // could not locate the binary (Codex S12 follow-up, 2026-04-18).
-    if resolved.claude.is_none() {
-        return Err(
-            "Claude CLI is not installed or not on the resolved PATH. Install it and restart the app."
-                .to_string(),
-        );
-    }
-
     let status = claude_cmd(&resolved)
         .args(["auth", "login"])
         .status()
