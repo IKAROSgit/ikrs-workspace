@@ -59,8 +59,8 @@ export default function SettingsView() {
       consultantEmail: consultant.email,
       timezone: engagement.settings.timezone,
       startDate: engagement.startDate instanceof Date
-        ? engagement.startDate.toISOString().split("T")[0]!
-        : String(engagement.startDate).split("T")[0]!,
+        ? engagement.startDate.toISOString().split("T")[0] ?? ""
+        : String(engagement.startDate).split("T")[0] ?? "",
     };
   }, [activeEngagementId, consultant, engagements, clients]);
 
