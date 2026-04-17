@@ -83,7 +83,7 @@ At session spawn time, the Rust backend generates `.mcp-config.json` in the enga
 ```
 
 **Resolution rules:**
-- `${GOOGLE_ACCESS_TOKEN}` is an env var placeholder — Claude CLI resolves it from its process environment at MCP server spawn time. The actual token is never written to disk.
+- ~~`${GOOGLE_ACCESS_TOKEN}` is an env var placeholder — Claude CLI resolves it from its process environment at MCP server spawn time. The actual token is never written to disk.~~ **AMENDED 2026-04-18** per Codex adversarial audit finding S14: the placeholder approach relied on unverified Claude CLI env-interpolation behaviour (Gate 6 violation). Current implementation writes the **literal access token value** into the generated `.mcp-config.json`. Security mitigations: file created with mode 0o600 via `OpenOptions::mode` (no umask-default window), under the user's engagement directory, in `.gitignore`, regenerated on every session spawn, short access-token lifetime (~1h). **Note for Phase 4d:** once vaults migrate to the Shared Drive path per ADR-013, the engagement directory is Drive-synced. `.mcp-config.json` must be relocated outside the vault root OR explicitly excluded from sync before 4d ships, otherwise the literal token syncs to Drive.
 - `{vaultPath}` is resolved at generation time to an absolute path from the client slug: `~/.ikrs-workspace/vaults/{client_slug}`.
 - Gmail, Calendar, Drive entries are included only if a Google OAuth token exists in OS keychain for the engagement (expired tokens are included — Claude reports errors, user sees "re-auth needed" rather than servers silently missing).
 - Obsidian entry is included only if the vault directory exists on disk.

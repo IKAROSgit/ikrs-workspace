@@ -27,6 +27,11 @@ pub async fn spawn_claude_session(
         return Err("Strict MCP mode: Google authentication required. Please authenticate before starting this session.".to_string());
     }
 
+    // Keep GOOGLE_ACCESS_TOKEN in the env_vars for the Claude CLI's
+    // own process. S14 fix means the MCP config now embeds the actual
+    // token directly rather than relying on `${VAR}` interpolation —
+    // env_vars here is defence-in-depth: if any future MCP adds its
+    // own env dependency or if Claude CLI itself ever reads the env.
     if let Some(ref token) = google_token {
         env_vars.insert("GOOGLE_ACCESS_TOKEN".to_string(), token.clone());
     }
@@ -46,16 +51,18 @@ pub async fn spawn_claude_session(
         }
 
         // 3. Generate MCP config (with resolved npx path for sandbox compatibility)
+        //    S14 fix: pass the actual token value, not a placeholder.
         let resolved: tauri::State<'_, crate::claude::binary_resolver::ResolvedBinaries> =
             app.state();
         let engagement_dir = std::path::Path::new(&engagement_path);
         let config_path = crate::claude::mcp_config::generate_mcp_config(
             engagement_dir,
-            has_token,
+            google_token.as_deref(),
             Some(&vault_path),
             resolved.npx.as_deref(),
         )?;
         mcp_config_path = Some(config_path.to_string_lossy().to_string());
+
     }
 
     // 4. Spawn Claude with MCP config
