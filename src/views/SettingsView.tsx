@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -10,7 +10,13 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEngagementActions } from "@/providers/EngagementProvider";
 import { useEngagementStore } from "@/stores/engagementStore";
-import { startOAuthFlow, cancelOAuthFlow, scaffoldEngagementSkills } from "@/lib/tauri-commands";
+import {
+  cancelOAuthFlow,
+  getCredential,
+  makeKeychainKey,
+  scaffoldEngagementSkills,
+  startOAuthFlow,
+} from "@/lib/tauri-commands";
 import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -42,6 +48,34 @@ export default function SettingsView() {
   const [oauthStatus, setOauthStatus] = useState<
     "idle" | "pending" | "success" | "error"
   >("idle");
+
+  // Hydrate OAuth connection state from the OS keychain whenever the
+  // active engagement changes. Prior behaviour: `oauthStatus` was
+  // component-local, so navigating away from Settings and back reset
+  // the "Connected successfully" indicator to "idle" even though the
+  // token remained in the keychain. Moe reported this as
+  // "as soon as I change tabs I guess it's gone" 2026-04-18.
+  useEffect(() => {
+    if (!activeEngagementId) {
+      setOauthStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const key = makeKeychainKey(activeEngagementId, "google");
+        const value = await getCredential(key);
+        if (!cancelled) {
+          setOauthStatus(value ? "success" : "idle");
+        }
+      } catch {
+        if (!cancelled) setOauthStatus("idle");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeEngagementId]);
 
   const skillUpdateParams: SkillUpdateParams | null = useMemo(() => {
     if (!activeEngagementId || !consultant) return null;

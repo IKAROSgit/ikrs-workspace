@@ -107,12 +107,16 @@ pub async fn start_redirect_server(
             .to_string();
         let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
 
-        // Store as JSON payload in keychain (includes refresh_token for auto-refresh)
+        // Store as JSON payload in keychain (includes refresh_token
+        // and client_secret so the refresh grant can succeed later
+        // without the caller having to re-supply them — see
+        // TokenPayload docstring).
         let payload = crate::oauth::token_refresh::TokenPayload {
             access_token,
             refresh_token,
             expires_at: chrono::Utc::now().timestamp() + expires_in,
             client_id: client_id.clone(),
+            client_secret: client_secret.clone(),
         };
         let payload_json = serde_json::to_string(&payload)
             .map_err(|e| format!("Failed to serialize token payload: {e}"))?;

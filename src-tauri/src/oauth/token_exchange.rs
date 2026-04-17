@@ -59,6 +59,47 @@ pub async fn exchange_authorization_code(
         .map_err(|e| format!("Token endpoint returned non-JSON: {e}"))
 }
 
+/// Parameters for the `refresh_token` grant. Google's Desktop clients
+/// require `client_secret` here too — same bug class as the
+/// authorization-code exchange. See the `exchange_refresh_token_posts_
+/// client_secret` regression guard below.
+pub struct RefreshTokenRequest<'a> {
+    pub endpoint: &'a str,
+    pub client_id: &'a str,
+    pub client_secret: &'a str,
+    pub refresh_token: &'a str,
+}
+
+/// Perform the refresh-token grant. Returns parsed JSON on HTTP 2xx;
+/// human-readable error string otherwise.
+pub async fn exchange_refresh_token(
+    req: RefreshTokenRequest<'_>,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(req.endpoint)
+        .form(&[
+            ("client_id", req.client_id),
+            ("client_secret", req.client_secret),
+            ("refresh_token", req.refresh_token),
+            ("grant_type", "refresh_token"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Token refresh request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Google session expired. Please re-authenticate. ({body})"
+        ));
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| format!("Refresh endpoint returned non-JSON: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +268,72 @@ mod tests {
 
         assert_eq!(result["access_token"].as_str(), Some("AT"));
         assert_eq!(result["expires_in"].as_i64(), Some(3600));
+    }
+
+    /// Same regression-guard shape as the authorization-code test —
+    /// covers the refresh grant. Would have caught the
+    /// `token_refresh.rs` missing-client_secret bug (latent as of
+    /// 2026-04-18; flagged in 161a148's commit message, addressed in
+    /// this commit's companion change).
+    #[tokio::test]
+    async fn refresh_posts_client_secret_and_all_required_fields() {
+        let (url, captured) = start_mock_token_endpoint(
+            r#"{"access_token":"NEW_AT","expires_in":3600,"token_type":"Bearer"}"#,
+        )
+        .await;
+
+        let result = exchange_refresh_token(RefreshTokenRequest {
+            endpoint: &url,
+            client_id: "TEST_CID",
+            client_secret: "GOCSPX-refresh-secret",
+            refresh_token: "1//fake-refresh-token-value",
+        })
+        .await;
+
+        assert!(result.is_ok(), "expected success, got {result:?}");
+
+        let c = captured.lock().unwrap();
+        let body = c.body.as_ref().expect("mock server never captured body");
+
+        assert!(
+            body.contains("client_secret=GOCSPX-refresh-secret"),
+            "refresh body must include client_secret; got: {body}"
+        );
+        assert!(body.contains("client_id=TEST_CID"));
+        assert!(body.contains("grant_type=refresh_token"));
+        assert!(body.contains("refresh_token="));
+    }
+
+    #[tokio::test]
+    async fn refresh_surfaces_error_body_on_401() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/token");
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let body = r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
+                let resp = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(), body
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let result = exchange_refresh_token(RefreshTokenRequest {
+            endpoint: &url,
+            client_id: "X",
+            client_secret: "X",
+            refresh_token: "X",
+        })
+        .await;
+
+        match result {
+            Err(msg) => assert!(msg.contains("Google session expired"),
+                "error must be user-readable; got: {msg}"),
+            Ok(_) => panic!("expected error on 401"),
+        }
     }
 }
