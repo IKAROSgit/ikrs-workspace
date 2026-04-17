@@ -41,6 +41,24 @@ export async function cancelOAuthFlow(): Promise<void> {
   return invoke("cancel_oauth_flow");
 }
 
+// Firebase identity flow (PKCE + OIDC via system browser).
+// Separate from startOAuthFlow because it targets Firebase identity
+// login, not per-engagement Google API access. See
+// src-tauri/src/oauth/identity_server.rs for the design rationale.
+export async function startFirebaseIdentityFlow(
+  clientId: string,
+  redirectPort: number,
+): Promise<OAuthFlowResult> {
+  return invoke("start_firebase_identity_flow", {
+    clientId,
+    redirectPort,
+  });
+}
+
+export async function cancelFirebaseIdentityFlow(): Promise<void> {
+  return invoke("cancel_firebase_identity_flow");
+}
+
 // Vault lifecycle
 export async function createVault(clientSlug: string): Promise<string> {
   return invoke("create_vault", { clientSlug });

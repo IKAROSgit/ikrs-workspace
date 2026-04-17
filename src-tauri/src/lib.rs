@@ -77,6 +77,8 @@ pub fn run() {
             commands::credentials::delete_credential,
             commands::oauth::start_oauth_flow,
             commands::oauth::cancel_oauth_flow,
+            commands::oauth::start_firebase_identity_flow,
+            commands::oauth::cancel_firebase_identity_flow,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,
