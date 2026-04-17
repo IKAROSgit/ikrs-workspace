@@ -85,12 +85,16 @@ fn parse_callback(request: &str) -> CallbackParams {
     out
 }
 
+// Neutral "received" wording so we do not claim success to the user
+// before the backend token exchange has actually succeeded. If the
+// exchange fails, the app surfaces a separate error; this page is
+// merely an acknowledgement that Google's redirect landed on us.
 const SUCCESS_HTML: &str = r#"<!DOCTYPE html>
-<html><head><title>IKAROS Workspace — Signed in</title>
+<html><head><title>IKAROS Workspace — Return to the app</title>
 <style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
 .card{background:white;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1);text-align:center;max-width:400px}
-h1{color:#22c55e;font-size:1.5rem;margin:0 0 0.5rem}p{color:#666;margin:0}</style></head>
-<body><div class="card"><h1>Signed in</h1><p>You can close this tab and return to IKAROS Workspace.</p></div></body></html>"#;
+h1{color:#0f172a;font-size:1.25rem;margin:0 0 0.5rem}p{color:#666;margin:0}</style></head>
+<body><div class="card"><h1>Sign-in received</h1><p>Return to IKAROS Workspace — it will confirm when the sign-in completes.</p></div></body></html>"#;
 
 const ERROR_HTML: &str = r#"<!DOCTYPE html>
 <html><head><title>IKAROS Workspace — Sign-in failed</title>
@@ -117,6 +121,13 @@ pub async fn start_identity_redirect_server(
     expected_nonce: String,
     app: AppHandle,
 ) -> Result<(tokio::task::JoinHandle<Result<(), String>>, u16), String> {
+    // Defensive — a zero-length expected_state would silently accept
+    // any callback missing the `state` parameter when decode returns
+    // an empty string. Callers should never do this; fail loudly.
+    if expected_state.is_empty() {
+        return Err("expected_state must not be empty".to_string());
+    }
+
     let (listener, actual_port) = bind_with_fallback(preferred_port).await?;
 
     let handle = tokio::spawn(async move {
@@ -131,9 +142,22 @@ pub async fn start_identity_redirect_server(
             Err::<(), String>(reason)
         };
 
-        let (mut stream, _addr) = match listener.accept().await {
-            Ok(ok) => ok,
-            Err(e) => return fail(format!("Accept failed: {e}")).await,
+        // Cap the accept() wait so the task cannot leak indefinitely
+        // if the frontend's 5-minute setTimeout is somehow suspended
+        // (tab backgrounded, system sleep). 310 s = frontend 5 min +
+        // 10 s grace.
+        let accept_result =
+            tokio::time::timeout(std::time::Duration::from_secs(310), listener.accept()).await;
+        let (mut stream, _addr) = match accept_result {
+            Ok(Ok(ok)) => ok,
+            Ok(Err(e)) => return fail(format!("Accept failed: {e}")).await,
+            Err(_) => {
+                return fail(
+                    "Sign-in listener timed out after 310 s waiting for Google callback"
+                        .to_string(),
+                )
+                .await
+            }
         };
 
         let mut buf = vec![0u8; 4096];

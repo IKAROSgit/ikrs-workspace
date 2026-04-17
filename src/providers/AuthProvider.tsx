@@ -37,6 +37,30 @@ const FIREBASE_IDENTITY_PORT = 49153;
 // the flow auto-aborts after this so the UI doesn't wedge indefinitely.
 const FIREBASE_SIGNIN_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * Decode the unsigned payload of a JWT without verifying the signature.
+ * Safe because we only use it to read the `nonce` claim for equality
+ * comparison against a value we generated ourselves. Firebase's
+ * signInWithCredential performs the full signature + iss + aud + exp
+ * validation when we pass the credential — we do not relitigate that
+ * here, only the nonce which Firebase does not validate.
+ */
+function decodeJwtClaims(jwt: string): { nonce?: string } | null {
+  const parts = jwt.split(".");
+  if (parts.length < 2) return null;
+  const [, payload] = parts;
+  if (!payload) return null;
+  try {
+    // Base64URL → base64 conversion, pad, decode.
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = atob(padded);
+    return JSON.parse(json) as { nonce?: string };
+  } catch {
+    return null;
+  }
+}
+
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
@@ -102,12 +126,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSignInError(null);
     setSignInInFlight(true);
 
+    // Hoist the promise ref slots ABOVE the listener registrations so
+    // TypeScript + a future refactor can never introduce a window where
+    // the callback closes over a binding that hasn't been initialised.
+    // At runtime they're `undefined` until the Promise constructor runs;
+    // the optional-chain call safely no-ops if an event fires before.
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let resolveRef: ((idToken: string) => void) | undefined;
+    let rejectRef: ((err: Error) => void) | undefined;
+
     // Register listeners BEFORE calling the backend so we never miss a
     // racing `firebase-auth:id-token-ready` event if Google's consent
     // screen returns very fast.
-    const unlistenReady = await listen<{ id_token: string }>(
+    const unlistenReady = await listen<{ id_token: string; expected_nonce: string }>(
       "firebase-auth:id-token-ready",
       (event) => {
+        // Nonce validation (Codex HIGH-2): Firebase's signInWithCredential
+        // does NOT auto-verify the `nonce` claim in the id_token against
+        // the nonce we embedded in the auth URL. We decode the JWT payload
+        // ourselves and compare. A mismatch means either the flow was
+        // replayed with a stale token, or Google echoed the wrong nonce
+        // (unlikely) — either way, fail closed.
+        const claims = decodeJwtClaims(event.payload.id_token);
+        if (claims && claims.nonce !== event.payload.expected_nonce) {
+          rejectRef?.(
+            new Error(
+              "Sign-in nonce mismatch — possible replay. Close your browser tab and try again.",
+            ),
+          );
+          return;
+        }
         resolveRef?.(event.payload.id_token);
       },
     );
@@ -117,10 +165,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         rejectRef?.(new Error(event.payload.reason));
       },
     );
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    let resolveRef: ((idToken: string) => void) | null = null;
-    let rejectRef: ((err: Error) => void) | null = null;
 
     try {
       const idTokenPromise = new Promise<string>((resolve, reject) => {
@@ -150,8 +194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       unlistenReady();
       unlistenError();
-      resolveRef = null;
-      rejectRef = null;
+      resolveRef = undefined;
+      rejectRef = undefined;
       setSignInInFlight(false);
     }
   };

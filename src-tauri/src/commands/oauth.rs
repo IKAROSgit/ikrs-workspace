@@ -9,7 +9,6 @@ pub struct OAuthState {
     // Firebase identity flow has its own slot to avoid cross-aborting the
     // engagement-OAuth flow when the two run concurrently.
     pub identity_pending_server: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
-    pub identity_pending_state: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -133,15 +132,6 @@ pub async fn start_firebase_identity_flow(
     let csrf_state = crate::oauth::identity_server::generate_random_b64(32);
     let nonce = crate::oauth::identity_server::generate_random_b64(32);
 
-    // Persist state so a later cancel_firebase_identity_flow can clear it.
-    {
-        let mut slot = state
-            .identity_pending_state
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *slot = Some(csrf_state.clone());
-    }
-
     let (handle, actual_port) = crate::oauth::identity_server::start_identity_redirect_server(
         redirect_port,
         client_id.clone(),
@@ -200,10 +190,5 @@ pub async fn cancel_firebase_identity_flow(
     if let Some(handle) = pending.take() {
         handle.abort();
     }
-    let mut slot = state
-        .identity_pending_state
-        .lock()
-        .map_err(|e| e.to_string())?;
-    *slot = None;
     Ok(())
 }
