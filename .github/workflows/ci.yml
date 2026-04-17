@@ -74,25 +74,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
       - name: Verify signing secrets on tag push
-        if: github.ref_type == 'tag' && runner.os == 'macOS'
+        # Run on every matrix OS so a Linux job with missing secrets does not
+        # silently pass while macOS fails — fail fast across the board.
+        if: github.ref_type == 'tag'
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           missing=()
           [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
-          [ -z "$APPLE_SIGNING_IDENTITY" ]   && missing+=("APPLE_SIGNING_IDENTITY")
-          [ -z "$APPLE_ID" ]                 && missing+=("APPLE_ID")
-          [ -z "$APPLE_TEAM_ID" ]            && missing+=("APPLE_TEAM_ID")
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD may be intentionally empty
+          # (if the key has no password) but the secret itself must be
+          # defined so Tauri knows to pass an empty string rather than
+          # prompt interactively. Check presence in env, not emptiness.
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD+set}" ]; then
+            missing+=("TAURI_SIGNING_PRIVATE_KEY_PASSWORD (set as empty string if key has no password)")
+          fi
+          # Apple secrets are only checked on macOS — other OSes don't
+          # sign or notarize, so missing them there is not an error.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            [ -z "$APPLE_SIGNING_IDENTITY" ] && missing+=("APPLE_SIGNING_IDENTITY")
+            [ -z "$APPLE_ID" ]               && missing+=("APPLE_ID")
+            [ -z "$APPLE_TEAM_ID" ]          && missing+=("APPLE_TEAM_ID")
+          fi
           if [ ${#missing[@]} -ne 0 ]; then
             echo "::error::Release tag push missing required secrets: ${missing[*]}"
             echo "::error::Configure these in repo Settings -> Secrets and variables -> Actions before tagging a release."
             exit 1
           fi
-          echo "All release signing secrets present."
+          echo "All release signing secrets present for ${{ runner.os }}."
       - name: Reject placeholder updater pubkey on tag push
         if: github.ref_type == 'tag'
         shell: bash

@@ -69,7 +69,7 @@ Phase 4b shipped the auto-updater but never verified it rejects a lower version.
 
 **Layer 1 — client-side version check:** in `src/components/UpdateChecker.tsx`, before accepting an update, compare `update.version` (from `latest.json`) to `app.getVersion()`. Reject if `latest.version <= current.version` with a log line but no user-facing error.
 
-**Layer 2 — signature manifest:** minisign signatures cover the bundle contents. Adding an in-manifest version string that we extract and compare belt-and-braces protects against MITM substitution of an old `latest.json` pointing at old signed artefacts.
+**Layer 2 — version pinning above Tauri's own check:** Tauri's `plugin-updater` already refuses to return an `Update` object from `check()` when the manifest `version` ≤ current `getVersion()`. That covers the naïve case. Layer 2 exists to protect against the MITM scenario where an attacker replays a real, correctly-signed `latest.json` from an earlier release pointing at its matching (validly-signed) older bundle — the bundle signature verifies, Tauri's built-in version check might pass if the attacker also altered the local app state, and the user is downgraded to a version with a known vulnerability. Layer 2 therefore compares `update.version` to `getVersion()` **in our own `UpdateChecker` component before calling `downloadAndInstall()`**, using semver comparison (`semver.gt(update.version, currentVersion)`). This is redundant with Tauri's check under normal conditions and will never trigger for a well-formed manifest — it is explicitly defence-in-depth. We do not add a custom version field to the manifest (Tauri's native `version` field is what we pin against); the value of Layer 2 is the extra TypeScript-level assertion, not a new schema.
 
 **Tests:** Vitest suite `tests/unit/updater-downgrade.test.ts` with mocked `latest.json` fixtures: same version (no update), higher version (accept), lower version (reject), missing version (reject), malformed version (reject). Target ≥5 cases, all assertions on the actual `UpdateChecker` logic.
 
@@ -136,6 +136,8 @@ Gates the `v*` tag pipeline. Phase 4c deliverable is green-on-green for this wor
 **Current state:** `src-tauri/capabilities/default.json` grants `keyring:default` to all webviews in the app. Any JS in any view can read any keyring entry. Phase 4a left this permissive because the refresh-token flow is the only keyring consumer and narrowing earlier would have blocked development.
 
 **Audit output (this phase):** a section in `SECURITY.md` enumerating every keyring read site in Rust (`src-tauri/src/credentials.rs`, `oauth/token_refresh.rs`, `vault.rs`) and confirming no webview JS calls keyring directly. If that holds, the finding is: narrowing is safe but low-priority until M3 introduces per-consultant isolation. Documented and deferred.
+
+**Coordination with Phase 4d:** `src-tauri/capabilities/default.json` (which currently carries `keyring:default` plus the `persisted-scope` allow-list for `~/.ikrs-workspace/vaults/`) will be edited again in Phase 4d when the vault path migrates to `Claude - IKRS/Obsidian Vault/engagements/` per ADR-013. To avoid merge churn, keep Phase 4c's keychain audit to a documentation-only output; if we decide to tighten `keyring:default` to a named scope, fold that edit into the Phase 4d capability rewrite so the file changes once, not twice.
 
 ### 8. CHANGELOG.md
 

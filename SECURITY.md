@@ -24,7 +24,7 @@
 
 ### Key pair
 
-The updater uses **minisign** (Ed25519). The keypair was generated 2026-04-17 with:
+The updater uses Tauri's updater plugin, which signs with an Ed25519 keypair in the `rsign2` format (minisign-compatible file layout, but the private key file is encrypted with Tauri's own password scheme — verify with `minisign -V` is possible for public-key verification, but the private key is not itself a raw minisign secret key). The keypair was generated 2026-04-17 with:
 
 ```bash
 npx tauri signer generate -w ~/.tauri/ikrs-workspace.key --ci --password ""
@@ -42,10 +42,10 @@ Key ID: `2363FF5A3F800DC9`.
 
 Before cutting any `v*` tag, the following must be set in repo Settings → Secrets and variables → Actions:
 
-- `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/ikrs-workspace.key` (the base64 string starting with `dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5Cg…`)
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — empty string for current key (no password set)
+- `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/ikrs-workspace.key` (the base64 string beginning `dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5Cg…`). Paste the entire file including the leading `untrusted comment:` line.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the key password. Set to empty string for the current key (generated with `--password ""`). **The secret must be defined even when empty** — Tauri's CI uses its presence in the environment to decide whether to prompt interactively. Omitting the secret entirely causes CI to hang waiting for input, then fail.
 
-CI enforces this: the `build` job in `.github/workflows/ci.yml` has a `Verify signing secrets on tag push` step that fails the build if any required secret is missing on a `v*` tag.
+CI enforces both: the `build` job in `.github/workflows/ci.yml` has a `Verify signing secrets on tag push` step that fails on every matrix OS if any required secret is missing, and also checks that `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is defined (even as an empty string).
 
 CI also enforces that the pubkey is not a placeholder: tag pushes that still contain `GENERATED_PUBLIC_KEY_HERE` in `tauri.conf.json` are rejected.
 
@@ -103,12 +103,34 @@ If an Apple Developer cert is compromised: revoke via Apple Developer portal, re
 
 ---
 
+## Keychain Scope Audit (Phase 4c §7)
+
+**Current posture:** `src-tauri/capabilities/default.json` grants `keyring:default`, which permits any webview in the app to invoke any keyring operation through the `tauri-plugin-keyring-api` bridge.
+
+**Audit — every keychain read/write in the codebase:**
+
+| Site | File | Operation | Key format | Why |
+|------|------|-----------|------------|-----|
+| OAuth token storage | `src-tauri/src/commands/oauth/token_refresh.rs` | Read + write | `ikrs:{engagement_id}:google` (access + refresh tokens as two entries) | Per-engagement Google credentials for MCP tool calls |
+| OAuth legacy read | `src-tauri/src/commands/credentials.rs` | Read | same key format | Fallback path retained from M1 before the token refresh module landed |
+| Vault key derivation (future) | `src-tauri/src/commands/vault.rs` | (reserved) | `ikrs:{engagement_id}:vault` | Reserved for age-encryption vault archive key (not yet implemented) |
+
+**Every call site is in Rust.** Grep across `src/` for direct keyring invocation from webview JS returns zero matches as of commit HEAD. The JS side talks to credentials only via well-scoped Tauri commands (`start_oauth_flow`, `refresh_token_if_needed`, `clear_engagement_credentials`) — never directly to the keyring plugin.
+
+**Conclusion:** The `keyring:default` capability is currently over-broad but not exploited — no webview JS reaches the keyring directly. Narrowing to a custom scope (e.g. only allowing `ikrs:*:google` keys) is **safe but low-priority**. Defer to M3, where multi-consultant isolation becomes necessary (each consultant should only see their own engagements' keys).
+
+**Phase 4d coordination:** `capabilities/default.json` will be edited in Phase 4d to re-scope the `persisted-scope` allow-list when vault paths move to the Shared Drive (ADR-013). If we ever decide to narrow `keyring:default`, fold that change into the same Phase 4d edit to avoid touching this file twice.
+
+**Rotation note:** If the keychain is ever compromised or the app identifier changes (as it did in Phase 4a: `com.ikaros.workspace` → `ae.ikaros.workspace`), every `ikrs:*:google` entry under the old identifier is orphaned and must be cleaned up by Keychain Access manually. The Phase 4a data migration already handled this for Moe's machine; future consultants installing a fresh build after identifier-change will not see orphans.
+
+---
+
 ## Open Risks
 
 Tracked separately in each phase's spec risk table. Top current items:
 
 - Apple Developer enrolment pending — no notarized build has yet been produced (Phase 4a exit criterion unmet).
-- `latest.json` endpoint assumes public repo visibility; `IKAROSgit/ikrs-workspace` is currently private. First release will 404 the updater on public internet until resolved (Phase 4b Codex condition C2).
-- `keyring:default` Tauri capability is permissive — any code in the app can read any keyring item. Acceptable while the app is single-tenant; tighten for M3 multi-consultant builds.
+- `latest.json` endpoint assumes public repo visibility; `IKAROSgit/ikrs-workspace` is currently private. First release will 404 the updater on public internet until resolved. See `docs/decisions/2026-04-17-latest-json-hosting.md` for A/B decision doc.
+- `keyring:default` Tauri capability is permissive — narrowing deferred to M3 per the audit above.
 
 See `.output/codex-reviews/` for full audit trail.
