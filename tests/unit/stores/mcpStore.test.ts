@@ -13,8 +13,9 @@ describe("mcpStore", () => {
       { type: "drive", status: "healthy", lastPing: new Date(), restartCount: 0 },
     ];
     useMcpStore.getState().setServers(servers);
-    expect(useMcpStore.getState().servers).toHaveLength(2);
-    expect(useMcpStore.getState().servers[0].type).toBe("gmail");
+    const afterSet = useMcpStore.getState().servers;
+    expect(afterSet).toHaveLength(2);
+    expect(afterSet[0]?.type).toBe("gmail");
   });
 
   it("setServerHealth updates individual server status", () => {
@@ -22,7 +23,8 @@ describe("mcpStore", () => {
       { type: "gmail", status: "healthy", lastPing: new Date(), restartCount: 0 },
     ]);
     useMcpStore.getState().setServerHealth("gmail", "down");
-    expect(useMcpStore.getState().servers[0].status).toBe("down");
+    const afterUpdate = useMcpStore.getState().servers;
+    expect(afterUpdate[0]?.status).toBe("down");
   });
 
   it("setServers with empty array clears all servers", () => {

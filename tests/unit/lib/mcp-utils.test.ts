@@ -28,7 +28,8 @@ describe("extractMcpServers", () => {
     ];
     const result = extractMcpServers(tools);
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("gmail");
+    const [first] = result;
+    expect(first?.type).toBe("gmail");
   });
 
   it("returns empty array for no MCP tools", () => {
@@ -43,8 +44,10 @@ describe("extractMcpServers", () => {
   it("populates restartCount: 0 and status: healthy", () => {
     const tools = ["mcp__gmail__read_message"];
     const result = extractMcpServers(tools);
-    expect(result[0].status).toBe("healthy");
-    expect(result[0].restartCount).toBe(0);
-    expect(result[0].lastPing).toBeInstanceOf(Date);
+    expect(result).toHaveLength(1);
+    const [first] = result;
+    expect(first?.status).toBe("healthy");
+    expect(first?.restartCount).toBe(0);
+    expect(first?.lastPing).toBeInstanceOf(Date);
   });
 });
