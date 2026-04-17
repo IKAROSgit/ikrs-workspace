@@ -116,6 +116,7 @@ h1{color:#ef4444;font-size:1.5rem;margin:0 0 0.5rem}p{color:#666;margin:0}</styl
 pub async fn start_identity_redirect_server(
     preferred_port: u16,
     client_id: String,
+    client_secret: String,
     verifier: String,
     expected_state: String,
     expected_nonce: String,
@@ -233,6 +234,22 @@ pub async fn start_identity_redirect_server(
         drop(stream);
 
         // Exchange code → tokens.
+        //
+        // Google's Desktop-app OAuth clients REQUIRE `client_secret` at
+        // the token endpoint even when PKCE is used. Per Google's own
+        // docs (https://developers.google.com/identity/protocols/oauth2/native-app)
+        // the Desktop client_secret is explicitly "not treated as a
+        // secret" — embedding it in a distributed binary is the
+        // expected pattern. PKCE remains in place as additional
+        // protection against code interception; it does not replace
+        // the secret parameter.
+        //
+        // Our earlier implementation omitted client_secret on the
+        // incorrect belief that Desktop + PKCE was sufficient. Google
+        // returned `invalid_request: client_secret is missing.` on
+        // every attempt. Fix: include it. See
+        // docs/specs/m2-phase4e-firebase-identity-signin-design.md
+        // Amendment 2026-04-17 for the full retrospective.
         let redirect_uri = format!("http://localhost:{actual_port}/oauth/callback");
         let http_client = reqwest::Client::new();
         let resp = match http_client
@@ -240,6 +257,7 @@ pub async fn start_identity_redirect_server(
             .form(&[
                 ("code", code.as_str()),
                 ("client_id", client_id.as_str()),
+                ("client_secret", client_secret.as_str()),
                 ("redirect_uri", redirect_uri.as_str()),
                 ("grant_type", "authorization_code"),
                 ("code_verifier", verifier.as_str()),

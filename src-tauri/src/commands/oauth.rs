@@ -113,10 +113,21 @@ pub async fn cancel_oauth_flow(
 #[tauri::command]
 pub async fn start_firebase_identity_flow(
     client_id: String,
+    client_secret: String,
     redirect_port: u16,
     state: State<'_, OAuthState>,
     app: AppHandle,
 ) -> Result<OAuthFlowResult, String> {
+    if client_id.trim().is_empty() {
+        return Err("client_id must not be empty".to_string());
+    }
+    if client_secret.trim().is_empty() {
+        return Err(
+            "client_secret must not be empty — set VITE_GOOGLE_OAUTH_CLIENT_SECRET in .env.local"
+                .to_string(),
+        );
+    }
+
     // Cancel any previous identity flow (leaves engagement flow alone).
     {
         let mut pending = state
@@ -135,6 +146,7 @@ pub async fn start_firebase_identity_flow(
     let (handle, actual_port) = crate::oauth::identity_server::start_identity_redirect_server(
         redirect_port,
         client_id.clone(),
+        client_secret,
         challenge.verifier,
         csrf_state.clone(),
         nonce.clone(),

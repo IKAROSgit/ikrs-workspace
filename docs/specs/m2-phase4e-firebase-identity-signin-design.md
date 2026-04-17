@@ -98,3 +98,36 @@ Replace the broken popup flow with a system-browser PKCE + OIDC flow that return
 ## Retrospective
 
 This spec did not exist before the code landed. The CODEX.md governance rule (added 2026-04-17) says all code-shipping work needs a spec — this file is the retroactive fulfilment. The code itself was Codex-reviewed in `.output/codex-reviews/2026-04-17-firebase-identity-auth-fix-review.md` which surfaced two HIGH-severity findings (wrong OAuth client type, missing nonce validation) both closed in the hardening commit on the same day.
+
+### Amendment 2026-04-17 — `client_secret` required for Google Desktop clients after all
+
+Both the initial implementation and the Codex heavy-review explicitly stated "Google Desktop-app OAuth clients do not send `client_secret` because PKCE replaces it." **This was wrong.** Moe hit the truth on the first real end-to-end run: Google's token endpoint returned:
+
+```
+{ "error": "invalid_request", "error_description": "client_secret is missing." }
+```
+
+Google's actual docs (https://developers.google.com/identity/protocols/oauth2/native-app) require `client_secret` at the token endpoint for Desktop clients even when PKCE is used. Google explicitly states the Desktop-client secret "is obviously not treated as a secret" — embedding it in a distributed binary is the documented expected pattern. PKCE remains in place as additional protection against authorization-code interception but does not replace the secret parameter on the wire.
+
+What changed in the code:
+- `src-tauri/src/oauth/identity_server.rs` — `start_identity_redirect_server` gains a `client_secret: String` parameter; it is included as the `client_secret` form field in the token-exchange POST.
+- `src-tauri/src/commands/oauth.rs` — `start_firebase_identity_flow` gains a `client_secret: String` parameter, passed through.
+- `src/lib/tauri-commands.ts` — TS wrapper signature updated.
+- `src/providers/AuthProvider.tsx` — reads `VITE_GOOGLE_OAUTH_CLIENT_SECRET` from env; refuses to initiate sign-in with a clear error message if it is empty.
+
+### GCP Configuration Requirement (amended)
+
+| Setting | Value |
+|---------|-------|
+| OAuth client type | Desktop app (per the HIGH-1 fix above — Web clients are also unworkable because they require a *confidential* secret, which is worse) |
+| OAuth consent screen User Type | External |
+| Publishing status | In production (or tester email added during Testing state) |
+| Scopes | `openid email profile` |
+| `VITE_GOOGLE_OAUTH_CLIENT_ID` in `.env.local` | The Desktop client's Client ID |
+| `VITE_GOOGLE_OAUTH_CLIENT_SECRET` in `.env.local` | The Desktop client's Client Secret (starts `GOCSPX-…`) |
+
+The client secret IS embedded in the built `.app` binary. This is acceptable per Google's own OAuth-for-native-apps guidance for this specific use case — but it means we MUST NOT reuse this OAuth client for anything that requires a truly-confidential secret (e.g. server-to-server flows). A separate Web-app OAuth client would handle any future server-side integrations.
+
+### Governance-rule update applied
+
+The double-failure pattern (initial impl wrong, first review confirmed wrong) prompted a further CODEX.md tightening: for auth-adjacent work, Codex PASS verdicts now require at least a stubbed end-to-end dry-run against the real third-party endpoint, not just "compiles + tests pass." Adding this gate would have caught the missing-client_secret error without Moe being the human in the loop.

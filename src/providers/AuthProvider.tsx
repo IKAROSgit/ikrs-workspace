@@ -116,9 +116,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (signInInFlight) return;
 
     const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
+    const clientSecret = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";
     if (!clientId) {
       setSignInError(
         "VITE_GOOGLE_OAUTH_CLIENT_ID is not set. Add it to .env.local and rebuild.",
+      );
+      return;
+    }
+    if (!clientSecret) {
+      setSignInError(
+        "VITE_GOOGLE_OAUTH_CLIENT_SECRET is not set. Add it to .env.local and rebuild. " +
+          "Google Desktop-app OAuth clients require the secret at the token endpoint even with PKCE.",
       );
       return;
     }
@@ -177,6 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { auth_url } = await startFirebaseIdentityFlow(
         clientId,
+        clientSecret,
         FIREBASE_IDENTITY_PORT,
       );
       await openUrl(auth_url);

@@ -45,12 +45,20 @@ export async function cancelOAuthFlow(): Promise<void> {
 // Separate from startOAuthFlow because it targets Firebase identity
 // login, not per-engagement Google API access. See
 // src-tauri/src/oauth/identity_server.rs for the design rationale.
+//
+// Google's Desktop-app OAuth clients require `client_secret` at the
+// token endpoint even with PKCE (the secret is explicitly non-
+// confidential for Desktop clients per Google's docs, but still
+// required on the wire). Client ID + Secret both sourced from
+// .env.local at Vite build time.
 export async function startFirebaseIdentityFlow(
   clientId: string,
+  clientSecret: string,
   redirectPort: number,
 ): Promise<OAuthFlowResult> {
   return invoke("start_firebase_identity_flow", {
     clientId,
+    clientSecret,
     redirectPort,
   });
 }
