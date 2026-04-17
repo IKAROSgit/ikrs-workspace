@@ -1,16 +1,28 @@
 # M2 Phase 4d: Canonical Vault Migration (per ADR-013)
 
 **Status:** Draft — awaits Codex spec sign-off, then Moe's Mac presence for content move.
-**Date:** 2026-04-17
+**Date:** 2026-04-17 (amended 2026-04-17 for M3 scope-lock pivot; see "Reviewer pivot" below)
 **Parent ADR:** `ikaros-platform:.architecture/DECISIONS.md` ADR-013 (Obsidian Canonical Paths)
 **Prior phases:** 4a (sandbox + signing), 4b (distribution polish), 4c (release readiness)
 **Dependency:** Moe's Mac — Google Drive client signed in and `Shared drives/99 Agent Drive/Claude - IKRS/Obsidian Vault/` accessible as a filesystem path.
 
 ---
 
+## Reviewer pivot (2026-04-17 amendment)
+
+The original M1 and 4d thinking assumed vault readers were **internal** IKAROS line managers — i.e. IKAROS employees with access to the same Shared Drive by org membership. The M3 scope lock (`docs/planning/2026-04-17-m3-scope-lock.md`) reframed the reviewer as the **external client** (e.g. someone at `@blr-world.com`, not `@ikaros.ae`). Different principal, different NDA posture, different ACL model.
+
+Implications preserved in this phase:
+- The Drive-path decision (ADR-013) is unchanged — consultant vaults still land at `~/Library/CloudStorage/…/Claude - IKRS/Obsidian Vault/engagements/{client-slug}/` on the consultant's Mac, and still sync to the Shared Drive.
+- The **visibility mechanism** (who sees what) shifts from "grant a role in the Shared Drive to IKAROS folks" to "grant a per-engagement Drive ACL to specific external client email addresses." This is **not** implemented in 4d — it's an M3/M4 concern.
+- 4d still ships as planned (path resolver, migration CLI, capability scope) because the path move happens regardless of who eventually reads the content.
+- What 4d **does not** promise anymore: Drive ACL provisioning. That moves into the M3+ track as "client portal" + vault access plumbing.
+
+---
+
 ## Goal
 
-Move consultant engagement vaults from the M1 default (`~/.ikrs-workspace/vaults/{client-slug}/`) to the ADR-013 canonical path (`~/Library/CloudStorage/GoogleDrive-moe@ikaros.ae/Shared drives/99 Agent Drive/Claude - IKRS/Obsidian Vault/engagements/{client-slug}/`). Drive-syncs engagement notes, enables line-manager visibility via Drive ACLs, removes the "four parallel Obsidian set-ups" problem on Moe's Mac. Must complete before any external consultant installs the app, otherwise new installs inherit the deprecated path as their default.
+Move consultant engagement vaults from the M1 default (`~/.ikrs-workspace/vaults/{client-slug}/`) to the ADR-013 canonical path (`~/Library/CloudStorage/GoogleDrive-moe@ikaros.ae/Shared drives/99 Agent Drive/Claude - IKRS/Obsidian Vault/engagements/{client-slug}/`). Drive-syncs engagement notes, enables later visibility to both internal reviewers (Shared Drive membership) and external clients (per-engagement ACLs granted in M3+), removes the "four parallel Obsidian set-ups" problem on Moe's Mac. Must complete before any external consultant installs the app, otherwise new installs inherit the deprecated path as their default.
 
 ## Scope
 
@@ -145,7 +157,7 @@ Every `engagement` document in Firestore has a `vaultPath` field set at creation
 | macOS sandbox rejects the long path with spaces | Vault reads/writes fail silently under sandbox enforcement | Empirical test under an ad-hoc-signed build before wider rollout. Fallback: keep transitional allow for old path for one release after migration. |
 | Google Drive client not signed in on consultant's Mac | Path resolves to a non-existent directory; app errors on first vault read | First-launch check: verify path exists, prompt consultant to sign into Drive. Graceful degradation: if Drive unavailable, offer local-only fallback. |
 | GDrive sync delay causes "newly-saved note not visible yet" on a second device | Consultant thinks their save was lost | Document. Obsidian handles this natively; UX hint in status bar. |
-| Simultaneous edits from line manager + consultant produce sync conflicts | Drive creates duplicate-conflict files | Single-user semantics for M2; M3 introduces proper concurrency. |
+| Simultaneous edits from external client reviewer + consultant produce sync conflicts | Drive creates duplicate-conflict files | M3 client access is read-only per scope lock. M4 handles any bidirectional concurrency. |
 | Migration script leaves the source directory in a partial state on interrupt | Data loss | Dry-run mode + transactional move (copy → verify → delete source). Symlink fallback for safety rollback. |
 | Phase 4a persisted-scope plugin cached the old path | After migration, the plugin may still "remember" the old scope | Clear the plugin's state file as part of migration; re-register on next launch. |
 | Firestore migration script runs against wrong project | Data corruption | Require explicit `--project=ikaros-portal` flag; no default. |
