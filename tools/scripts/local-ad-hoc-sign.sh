@@ -33,12 +33,18 @@ if ! npx --no-install tauri --version >/dev/null 2>&1; then
   exit 2
 fi
 
-# Build the release bundle. Unsigned at this point — tauri.conf.json
-# sets signingIdentity to "-" which Tauri's bundler treats as "skip my
-# signing step." We do the ad-hoc sign ourselves below so we also
-# strip quarantine.
+# Build the release bundle. We explicitly scope to `--bundles app`:
+# tauri.conf.json declares `"targets": "all"` which otherwise tries to
+# build a DMG too, and DMG bundling depends on `create-dmg` (homebrew)
+# which we do not require for local daily use. Notarization is also
+# skipped (no APPLE_ID env vars) — expected for ad-hoc.
+#
+# `"signingIdentity": "-"` in tauri.conf.json tells Tauri's bundler to
+# run its own ad-hoc codesign during bundling. We then re-sign below
+# with --force --deep to cover nested frameworks Tauri may miss, and
+# strip quarantine for friction-free first launch.
 echo "==> Building release bundle..."
-npx tauri build
+npx tauri build --bundles app
 
 APP_DIR="src-tauri/target/release/bundle/macos"
 APP_PATH="$APP_DIR/IKAROS Workspace.app"
