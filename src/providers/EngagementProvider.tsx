@@ -65,7 +65,7 @@ export function EngagementProvider({ children }: { children: ReactNode }) {
       setTasks([]);
       return;
     }
-    const q = query(collection(db, "tasks"), where("engagementId", "==", activeEngagementId));
+    const q = query(collection(db, "ikrs_tasks"), where("engagementId", "==", activeEngagementId));
     const unsubscribe = onSnapshot(q, (snap) => {
       const tasks = snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Task);
       setTasks(tasks.sort((a, b) => a.sortOrder - b.sortOrder));
@@ -102,7 +102,7 @@ export function EngagementProvider({ children }: { children: ReactNode }) {
       await deleteDoc(doc(db, "engagements", id));
     },
     createTask: async (data) => {
-      const ref = await addDoc(collection(db, "tasks"), {
+      const ref = await addDoc(collection(db, "ikrs_tasks"), {
         ...data,
         _v: 1,
         createdAt: serverTimestamp(),
@@ -111,13 +111,13 @@ export function EngagementProvider({ children }: { children: ReactNode }) {
       return ref.id;
     },
     updateTask: async (id, data) => {
-      await updateDoc(doc(db, "tasks", id), {
+      await updateDoc(doc(db, "ikrs_tasks", id), {
         ...data,
         updatedAt: serverTimestamp(),
       });
     },
     deleteTask: async (id) => {
-      await deleteDoc(doc(db, "tasks", id));
+      await deleteDoc(doc(db, "ikrs_tasks", id));
     },
   };
 
