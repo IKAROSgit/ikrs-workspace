@@ -111,7 +111,7 @@ If an Apple Developer cert is compromised: revoke via Apple Developer portal, re
 
 | Site | File | Operation | Key format | Why |
 |------|------|-----------|------------|-----|
-| OAuth token storage | `src-tauri/src/commands/oauth/token_refresh.rs` | Read + write | `ikrs:{engagement_id}:google` (access + refresh tokens as two entries) | Per-engagement Google credentials for MCP tool calls |
+| OAuth token storage | `src-tauri/src/oauth/token_refresh.rs` | Read + write | `ikrs:{engagement_id}:google` (access + refresh tokens as two entries) | Per-engagement Google credentials for MCP tool calls |
 | OAuth legacy read | `src-tauri/src/commands/credentials.rs` | Read | same key format | Fallback path retained from M1 before the token refresh module landed |
 | Vault key derivation (future) | `src-tauri/src/commands/vault.rs` | (reserved) | `ikrs:{engagement_id}:vault` | Reserved for age-encryption vault archive key (not yet implemented) |
 
