@@ -26,7 +26,7 @@
       "endpoints": [
         "https://github.com/IKAROSgit/ikrs-workspace/releases/latest/download/latest.json"
       ],
-      "pubkey": "GENERATED_PUBLIC_KEY_HERE"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzNjNGRjVBM0Y4MDBEQzkKUldUSkRZQS9XdjlqSTZDVWROdGVuYncyemVxNVc1b1ZDVGlsZlc5Y2NGaklaT2dzeGdGdmkrbm0K"
     }
   },
   "bundle": {

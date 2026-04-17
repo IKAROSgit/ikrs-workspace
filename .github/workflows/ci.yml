@@ -73,6 +73,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+      - name: Verify signing secrets on tag push
+        if: github.ref_type == 'tag' && runner.os == 'macOS'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
+          [ -z "$APPLE_SIGNING_IDENTITY" ]   && missing+=("APPLE_SIGNING_IDENTITY")
+          [ -z "$APPLE_ID" ]                 && missing+=("APPLE_ID")
+          [ -z "$APPLE_TEAM_ID" ]            && missing+=("APPLE_TEAM_ID")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Release tag push missing required secrets: ${missing[*]}"
+            echo "::error::Configure these in repo Settings -> Secrets and variables -> Actions before tagging a release."
+            exit 1
+          fi
+          echo "All release signing secrets present."
+      - name: Reject placeholder updater pubkey on tag push
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          if grep -q 'GENERATED_PUBLIC_KEY_HERE' src-tauri/tauri.conf.json; then
+            echo "::error::tauri.conf.json still contains GENERATED_PUBLIC_KEY_HERE placeholder."
+            echo "::error::Generate a real keypair with 'npx tauri signer generate' and update the pubkey before tagging."
+            exit 1
+          fi
       - run: npm ci
       - uses: tauri-apps/tauri-action@v0
         with:

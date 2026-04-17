@@ -33,3 +33,6 @@ src-tauri/target/
 *.njsproj
 *.sln
 *.sw?
+
+# Superpowers skill scratch (brainstorm sessions, etc.)
+.superpowers/
