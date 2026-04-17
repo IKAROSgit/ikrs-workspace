@@ -44,11 +44,30 @@ pub fn resolve_binaries() -> ResolvedBinaries {
 }
 
 fn resolve_claude(home: &PathBuf) -> Option<PathBuf> {
-    let candidates = vec![
+    let mut candidates = vec![
+        // `claude migrate-installer` moves the CLI to ~/.local/bin —
+        // the official recommended path for users who ran migration.
+        // Moe's install was here; our resolver previously missed it.
+        home.join(".local/bin/claude"),
+        // Legacy install location from the pre-migrate installer.
         home.join(".claude/local/bin/claude"),
+        // Homebrew + manual-install paths.
         PathBuf::from("/usr/local/bin/claude"),
         PathBuf::from("/opt/homebrew/bin/claude"),
+        // npm-global default prefix (when users run
+        // `npm install -g @anthropic-ai/claude-code` without a
+        // custom prefix).
+        home.join(".npm-global/bin/claude"),
+        home.join(".volta/bin/claude"),
     ];
+    // nvm puts a per-node-version claude under each version's bin.
+    let nvm_pattern = home.join(".nvm/versions/node/*/bin/claude");
+    if let Ok(paths) = glob::glob(&nvm_pattern.to_string_lossy()) {
+        let mut nvm_paths: Vec<PathBuf> = paths.filter_map(|p| p.ok()).collect();
+        nvm_paths.sort();
+        nvm_paths.reverse();
+        candidates.extend(nvm_paths);
+    }
     resolve_binary("claude", &candidates)
 }
 
