@@ -34,9 +34,21 @@ struct McpConfig {
 ///   (short lifetime, and the token itself is a 1-hour access token
 ///   that the refresh module swaps out).
 /// - `vault_path`: if Some and directory exists, includes Obsidian server
+/// - `google_oauth`: if Some, includes gmail (uses full OAuth creds) and
+///   drive (uses access_token). gmail's @shinzolabs package does its own
+///   OAuth refresh cycle using CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN —
+///   confirmed by inspecting `dist/config.js` 2026-04-18 after the
+///   stream-json probe revealed it ignores `GOOGLE_ACCESS_TOKEN`.
+pub struct GoogleOAuthCreds<'a> {
+    pub access_token: &'a str,
+    pub client_id: &'a str,
+    pub client_secret: &'a str,
+    pub refresh_token: &'a str,
+}
+
 pub fn generate_mcp_config(
     engagement_path: &Path,
-    google_access_token: Option<&str>,
+    google_oauth: Option<&GoogleOAuthCreds<'_>>,
     vault_path: Option<&Path>,
     npx_path: Option<&Path>,
 ) -> Result<PathBuf, String> {
@@ -87,14 +99,45 @@ pub fn generate_mcp_config(
 
     let mut servers = HashMap::new();
 
-    if let Some(token) = google_access_token {
+    if let Some(creds) = google_oauth {
+        // Gmail MCP (2026-04-18 rewrite — see retrospective comment above
+        // about @shinzolabs not reading GOOGLE_ACCESS_TOKEN): pass full
+        // OAuth creds so the package can run its own refresh cycle.
+        //
+        // Custom PORT + AUTH_SERVER_PORT: @shinzolabs binds an HTTP
+        // transport port unconditionally at startup (default 3000).
+        // Port 3000 collides with common local dev servers (Next.js,
+        // Grafana, Metabase, etc.). We pin to 53121/53122 in the private
+        // IANA dynamic range. Tests below lock in that every gmail env
+        // carries both port overrides — dropping either would re-expose
+        // the EADDRINUSE failure mode that wedged "Connecting..." on
+        // Moe's Mac 2026-04-18.
+        //
+        // TELEMETRY_ENABLED=false: this package phones home to
+        // shinzolabs by default. Off for consultant NDA posture.
+        //
+        // Single-session limitation: max_sessions=1 in session_manager,
+        // so two engagements spawning gmail simultaneously won't happen.
+        // When that constraint lifts, replace the constant ports with
+        // a per-engagement hash (engagement_id → port derivation).
         servers.insert(
             "gmail".to_string(),
             McpServerEntry {
                 command: npx_command.clone(),
                 args: vec!["@shinzolabs/gmail-mcp@1.7.4".to_string()],
                 env: HashMap::from([
-                    ("GOOGLE_ACCESS_TOKEN".to_string(), token.to_string()),
+                    ("CLIENT_ID".to_string(), creds.client_id.to_string()),
+                    (
+                        "CLIENT_SECRET".to_string(),
+                        creds.client_secret.to_string(),
+                    ),
+                    (
+                        "REFRESH_TOKEN".to_string(),
+                        creds.refresh_token.to_string(),
+                    ),
+                    ("PORT".to_string(), "53121".to_string()),
+                    ("AUTH_SERVER_PORT".to_string(), "53122".to_string()),
+                    ("TELEMETRY_ENABLED".to_string(), "false".to_string()),
                     ("PATH".to_string(), injected_path.clone()),
                 ]),
             },
@@ -139,7 +182,10 @@ pub fn generate_mcp_config(
                 command: npx_command.clone(),
                 args: vec!["@piotr-agier/google-drive-mcp@2.0.2".to_string()],
                 env: HashMap::from([
-                    ("GOOGLE_ACCESS_TOKEN".to_string(), token.to_string()),
+                    (
+                        "GOOGLE_ACCESS_TOKEN".to_string(),
+                        creds.access_token.to_string(),
+                    ),
                     ("PATH".to_string(), injected_path.clone()),
                 ]),
             },
@@ -243,6 +289,18 @@ mod tests {
     use tempfile::TempDir;
 
     const FAKE_TOKEN: &str = "ya29.fake-access-token-for-tests";
+    const FAKE_CLIENT_ID: &str = "test-client-id.apps.googleusercontent.com";
+    const FAKE_CLIENT_SECRET: &str = "GOCSPX-fake-client-secret";
+    const FAKE_REFRESH_TOKEN: &str = "1//fake-refresh-token";
+
+    fn fake_creds() -> GoogleOAuthCreds<'static> {
+        GoogleOAuthCreds {
+            access_token: FAKE_TOKEN,
+            client_id: FAKE_CLIENT_ID,
+            client_secret: FAKE_CLIENT_SECRET,
+            refresh_token: FAKE_REFRESH_TOKEN,
+        }
+    }
 
     #[test]
     fn test_generate_config_with_google_token() {
@@ -250,7 +308,8 @@ mod tests {
         let vault = dir.path().join("vault");
         fs::create_dir(&vault).unwrap();
 
-        let result = generate_mcp_config(dir.path(), Some(FAKE_TOKEN), Some(&vault), None);
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), Some(&vault), None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();
@@ -267,26 +326,84 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_config_token_written_literally() {
-        // S14 core regression guard: the actual token value appears in
-        // every Google-provider env, NOT the `${GOOGLE_ACCESS_TOKEN}`
-        // placeholder. Codex-flagged fix 2026-04-17.
+    fn test_generate_config_drive_token_written_literally() {
+        // S14 core regression guard: the actual access token appears
+        // in drive's env, NOT the `${GOOGLE_ACCESS_TOKEN}` placeholder.
+        // Codex-flagged fix 2026-04-17.
+        //
+        // Gmail is excluded from this check because @shinzolabs/gmail-mcp
+        // doesn't read GOOGLE_ACCESS_TOKEN at all (2026-04-18 source
+        // inspection) — it uses CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN
+        // and runs its own refresh cycle. See separate gmail tests.
         let dir = TempDir::new().unwrap();
-        let result = generate_mcp_config(dir.path(), Some(FAKE_TOKEN), None, None);
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), None, None);
         assert!(result.is_ok());
 
         let content = fs::read_to_string(result.unwrap()).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        for provider in ["gmail", "drive"] {
-            let env = &parsed["mcpServers"][provider]["env"]["GOOGLE_ACCESS_TOKEN"];
-            assert_eq!(
-                env.as_str().unwrap(),
-                FAKE_TOKEN,
-                "{provider} should contain literal token value, not placeholder"
-            );
-        }
+        let drive_token = &parsed["mcpServers"]["drive"]["env"]["GOOGLE_ACCESS_TOKEN"];
+        assert_eq!(drive_token.as_str().unwrap(), FAKE_TOKEN);
         // Defensive: no placeholder string anywhere in the written file.
         assert!(!content.contains("${GOOGLE_ACCESS_TOKEN}"));
+    }
+
+    #[test]
+    fn test_gmail_uses_oauth_creds_not_access_token() {
+        // Regression guard for the 2026-04-18 gmail-mcp fix. The
+        // @shinzolabs/gmail-mcp package ignores GOOGLE_ACCESS_TOKEN
+        // entirely — it reads CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN
+        // from env and runs its own OAuth refresh. Dropping any of
+        // those three would regress gmail MCP to status:"failed".
+        let dir = TempDir::new().unwrap();
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), None, None);
+        let content = fs::read_to_string(result.unwrap()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let gmail_env = &parsed["mcpServers"]["gmail"]["env"];
+
+        assert_eq!(gmail_env["CLIENT_ID"].as_str().unwrap(), FAKE_CLIENT_ID);
+        assert_eq!(
+            gmail_env["CLIENT_SECRET"].as_str().unwrap(),
+            FAKE_CLIENT_SECRET
+        );
+        assert_eq!(
+            gmail_env["REFRESH_TOKEN"].as_str().unwrap(),
+            FAKE_REFRESH_TOKEN
+        );
+        // Gmail env must NOT carry GOOGLE_ACCESS_TOKEN — the MCP
+        // doesn't read it, and leaking it here would be a pointless
+        // secondary copy of the credential.
+        assert!(
+            gmail_env.get("GOOGLE_ACCESS_TOKEN").is_none(),
+            "gmail MCP shouldn't receive GOOGLE_ACCESS_TOKEN (@shinzolabs ignores it)"
+        );
+    }
+
+    #[test]
+    fn test_gmail_custom_ports_pinned() {
+        // Regression guard for the 2026-04-18 EADDRINUSE fix. Without
+        // PORT + AUTH_SERVER_PORT overrides, @shinzolabs/gmail-mcp
+        // binds :3000 which collides with common local dev servers
+        // (Next.js default, Grafana, Metabase, the user's own web
+        // projects...). The MCP crashes at startup with
+        // `listen EADDRINUSE: address already in use :::3000` before
+        // it can even respond to the MCP initialize handshake, and
+        // Claude reports it as status:"failed".
+        //
+        // We pin to 53121 / 53122 in the IANA dynamic range. Dropping
+        // either env var would re-expose the EADDRINUSE failure mode.
+        let dir = TempDir::new().unwrap();
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), None, None);
+        let content = fs::read_to_string(result.unwrap()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let gmail_env = &parsed["mcpServers"]["gmail"]["env"];
+
+        assert_eq!(gmail_env["PORT"].as_str().unwrap(), "53121");
+        assert_eq!(gmail_env["AUTH_SERVER_PORT"].as_str().unwrap(), "53122");
+        // Also: telemetry must be disabled for the consultant-NDA posture.
+        assert_eq!(gmail_env["TELEMETRY_ENABLED"].as_str().unwrap(), "false");
     }
 
     #[cfg(unix)]
@@ -294,7 +411,8 @@ mod tests {
     fn test_generate_config_file_perms_600() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
-        let result = generate_mcp_config(dir.path(), Some(FAKE_TOKEN), None, None);
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), None, None);
         let config_path = result.unwrap();
         let mode = fs::metadata(&config_path).unwrap().permissions().mode();
         // On Unix the low 9 bits are rwxrwxrwx; 0o600 = rw-------.
@@ -324,7 +442,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let nonexistent = dir.path().join("missing_vault");
 
-        let result = generate_mcp_config(dir.path(), Some(FAKE_TOKEN), Some(&nonexistent), None);
+        let creds = fake_creds();
+        let result = generate_mcp_config(dir.path(), Some(&creds), Some(&nonexistent), None);
         assert!(result.is_ok());
 
         let config_path = result.unwrap();
@@ -374,10 +493,11 @@ mod tests {
         let vault = dir.path().join("vault");
         fs::create_dir(&vault).unwrap();
         let fake_npx = PathBuf::from("/opt/homebrew/bin/npx");
+        let creds = fake_creds();
 
         let result = generate_mcp_config(
             dir.path(),
-            Some(FAKE_TOKEN),
+            Some(&creds),
             Some(&vault),
             Some(&fake_npx),
         );

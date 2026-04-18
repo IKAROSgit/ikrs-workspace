@@ -139,6 +139,58 @@ pub async fn refresh_if_needed(keychain_key: &str, app: &AppHandle) -> Result<St
     Ok(new_access_token)
 }
 
+/// Like `refresh_if_needed`, but returns the full TokenPayload so
+/// callers that need `client_id`/`client_secret`/`refresh_token` can
+/// wire them through (e.g. the gmail MCP spawn — see
+/// `mcp_config::GoogleOAuthCreds` — which runs its own OAuth refresh
+/// cycle and ignores a bare access_token). Single-implementation
+/// re-use would be cleaner; kept as a parallel function for now
+/// because the refresh-and-store flow returns a freshly-constructed
+/// TokenPayload already, and we want the same cache-first / refresh
+/// semantics without duplicating that logic into callers.
+pub async fn get_payload_refresh_if_needed(
+    keychain_key: &str,
+    app: &AppHandle,
+) -> Result<TokenPayload, String> {
+    let raw = app
+        .keyring()
+        .get_password(IKRS_SERVICE, keychain_key)
+        .ok()
+        .flatten()
+        .ok_or("No Google token found. Please authenticate first.")?;
+
+    let mut payload: TokenPayload = serde_json::from_str(&raw).map_err(|_| {
+        "Google session expired. Please re-authenticate.".to_string()
+    })?;
+
+    if payload.is_expired() {
+        // Refresh grants a new access_token; delegate to the bare
+        // `refresh_if_needed` which also updates the keychain and
+        // cache. Then re-read.
+        let new_access_token = refresh_if_needed(keychain_key, app).await?;
+        payload.access_token = new_access_token;
+        // expires_at in the struct is stale, but callers of
+        // get_payload_refresh_if_needed don't use it — they want
+        // the static client_id/secret/refresh_token values.
+    } else {
+        // Mirror `refresh_if_needed`'s cache-warm behaviour on the
+        // fresh-token path so the next refresh_if_needed skips the
+        // keychain prompt.
+        let cache: tauri::State<TokenCache> = app.state();
+        cache
+            .insert(
+                keychain_key.to_string(),
+                CachedToken {
+                    access_token: payload.access_token.clone(),
+                    expires_at: payload.expires_at,
+                },
+            )
+            .await;
+    }
+
+    Ok(payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

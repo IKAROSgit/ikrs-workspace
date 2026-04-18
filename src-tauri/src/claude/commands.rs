@@ -15,12 +15,16 @@ pub async fn spawn_claude_session(
     let mut env_vars = std::collections::HashMap::new();
     let mut mcp_config_path: Option<String> = None;
 
-    // 1. Read Google OAuth token from keychain, refresh if expired
+    // 1. Read Google OAuth payload from keychain, refresh if expired.
+    //    We need the FULL payload (not just access_token) because the
+    //    gmail MCP spawn consumes CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN
+    //    — see mcp_config::GoogleOAuthCreds docstring for rationale.
     let keychain_key = make_keychain_key(&engagement_id, "google");
-    let google_token = crate::oauth::token_refresh::refresh_if_needed(&keychain_key, &app)
-        .await
-        .ok();
-    let has_token = google_token.is_some();
+    let google_payload =
+        crate::oauth::token_refresh::get_payload_refresh_if_needed(&keychain_key, &app)
+            .await
+            .ok();
+    let has_token = google_payload.is_some();
 
     // Strict MCP: require Google token for fresh spawns (skip on resume -- Codex I2)
     if resume_session_id.is_none() && strict_mcp.unwrap_or(false) && !has_token {
@@ -32,8 +36,11 @@ pub async fn spawn_claude_session(
     // token directly rather than relying on `${VAR}` interpolation —
     // env_vars here is defence-in-depth: if any future MCP adds its
     // own env dependency or if Claude CLI itself ever reads the env.
-    if let Some(ref token) = google_token {
-        env_vars.insert("GOOGLE_ACCESS_TOKEN".to_string(), token.clone());
+    if let Some(ref payload) = google_payload {
+        env_vars.insert(
+            "GOOGLE_ACCESS_TOKEN".to_string(),
+            payload.access_token.clone(),
+        );
     }
 
     // 2. Resolve vault path and ensure directory exists (Codex C1 fix)
@@ -52,12 +59,23 @@ pub async fn spawn_claude_session(
 
         // 3. Generate MCP config (with resolved npx path for sandbox compatibility)
         //    S14 fix: pass the actual token value, not a placeholder.
+        //    Gmail-MCP (2026-04-18) consumes the full OAuth credential
+        //    set rather than the bare access_token — see
+        //    mcp_config::GoogleOAuthCreds docstring.
         let resolved: tauri::State<'_, crate::claude::binary_resolver::ResolvedBinaries> =
             app.state();
         let engagement_dir = std::path::Path::new(&engagement_path);
+        let creds = google_payload.as_ref().map(|p| {
+            crate::claude::mcp_config::GoogleOAuthCreds {
+                access_token: &p.access_token,
+                client_id: &p.client_id,
+                client_secret: &p.client_secret,
+                refresh_token: &p.refresh_token,
+            }
+        });
         let config_path = crate::claude::mcp_config::generate_mcp_config(
             engagement_dir,
-            google_token.as_deref(),
+            creds.as_ref(),
             Some(&vault_path),
             resolved.npx.as_deref(),
         )?;
