@@ -88,8 +88,26 @@ pub fn generate_mcp_config(
                 "obsidian".to_string(),
                 McpServerEntry {
                     command: npx_command.clone(),
+                    // NOTE 2026-04-18: `@bitbonsai/mcpvault@1.3.0`
+                    // (the version we previously pinned here) has
+                    // NEVER been published to npm. The npm registry's
+                    // `@bitbonsai/mcpvault` only has 0.8.2, 0.9.0,
+                    // 0.10.0, 0.11.0. Trying to `npx @bitbonsai/
+                    // mcpvault@1.3.0` returns `ETARGET No matching
+                    // version found for @bitbonsai/mcpvault@1.3.0`
+                    // and npm exits 1. Claude CLI's MCP init then
+                    // waits indefinitely for the handshake that
+                    // never comes, and the surrounding Gmail/
+                    // Calendar/Drive spawns fail to progress as well
+                    // (cascade). Moe hit this as a 20-hour
+                    // "Connecting..." hang. Fixed: pin to the
+                    // highest-published version instead. Every
+                    // pinned version in this file should be checked
+                    // against `npm view <pkg> versions` on first
+                    // introduction — see CODEX.md Gate-6-equivalent
+                    // rule for package pins, queued as a follow-up.
                     args: vec![
-                        "@bitbonsai/mcpvault@1.3.0".to_string(),
+                        "@bitbonsai/mcpvault@0.11.0".to_string(),
                         vp.to_string_lossy().to_string(),
                     ],
                     env: HashMap::new(),
