@@ -58,17 +58,40 @@ pub fn generate_mcp_config(
                 )]),
             },
         );
-        servers.insert(
-            "calendar".to_string(),
-            McpServerEntry {
-                command: npx_command.clone(),
-                args: vec!["@cocal/google-calendar-mcp@2.6.1".to_string()],
-                env: HashMap::from([(
-                    "GOOGLE_ACCESS_TOKEN".to_string(),
-                    token.to_string(),
-                )]),
-            },
-        );
+        // NOTE 2026-04-18: @cocal/google-calendar-mcp is temporarily
+        // REMOVED from the default MCP set. Root cause: this package
+        // does NOT accept GOOGLE_ACCESS_TOKEN as env var (unlike our
+        // gmail + drive + obsidian MCPs). Instead it wants
+        // GOOGLE_OAUTH_CREDENTIALS pointing at a gcp-oauth.keys.json
+        // file (Google OAuth client credentials format) and then
+        // performs ITS OWN OAuth consent flow + token exchange +
+        // stores tokens at ~/.config/google-calendar-mcp/tokens.json.
+        //
+        // Confirmed via direct `npx @cocal/google-calendar-mcp@2.6.1`
+        // on Moe's Mac 2026-04-18:
+        //   "Error loading OAuth keys: OAuth credentials not found.
+        //    Please provide credentials using one of these methods:
+        //      1. Environment variable:
+        //         Set GOOGLE_OAUTH_CREDENTIALS to the path of your
+        //         credentials file..."
+        //
+        // Making it work cleanly requires either (a) writing our own
+        // gcp-oauth.keys.json from the OAuth client env vars plus
+        // having the MCP do its own OAuth (which would interfere with
+        // our per-engagement OAuth UX), or (b) pre-populating the
+        // tokens.json file with our already-obtained access+refresh
+        // tokens. Either is a modest engineering task but blocks Moe
+        // from using the app daily RIGHT NOW (without this, Claude's
+        // system.init never fires → UI wedges on "Connecting...").
+        //
+        // Follow-up work tracked: integrate calendar by writing the
+        // tokens.json pre-population path when we can validate the
+        // exact JSON schema against @cocal's TokenManager
+        // implementation. Until then, consultants lose calendar
+        // access inside the Claude session but can still use
+        // Google Calendar directly in their browser.
+        //
+        // servers.insert("calendar", ... ) — intentionally omitted.
         servers.insert(
             "drive".to_string(),
             McpServerEntry {
@@ -191,10 +214,12 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let servers = parsed["mcpServers"].as_object().unwrap();
         assert!(servers.contains_key("gmail"));
-        assert!(servers.contains_key("calendar"));
         assert!(servers.contains_key("drive"));
         assert!(servers.contains_key("obsidian"));
-        assert_eq!(servers.len(), 4);
+        // Calendar intentionally omitted — see comment on calendar
+        // insertion in generate_mcp_config (2026-04-18 follow-up).
+        assert!(!servers.contains_key("calendar"));
+        assert_eq!(servers.len(), 3);
     }
 
     #[test]
@@ -208,7 +233,7 @@ mod tests {
 
         let content = fs::read_to_string(result.unwrap()).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        for provider in ["gmail", "calendar", "drive"] {
+        for provider in ["gmail", "drive"] {
             let env = &parsed["mcpServers"][provider]["env"]["GOOGLE_ACCESS_TOKEN"];
             assert_eq!(
                 env.as_str().unwrap(),
@@ -263,8 +288,10 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let servers = parsed["mcpServers"].as_object().unwrap();
         assert!(servers.contains_key("gmail"));
+        assert!(servers.contains_key("drive"));
         assert!(!servers.contains_key("obsidian"));
-        assert_eq!(servers.len(), 3);
+        assert!(!servers.contains_key("calendar"));
+        assert_eq!(servers.len(), 2);
     }
 
     #[test]
