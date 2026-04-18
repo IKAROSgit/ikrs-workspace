@@ -44,6 +44,47 @@ pub fn generate_mcp_config(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "npx".to_string());
 
+    // PATH injection for every MCP env block.
+    //
+    // Root cause this addresses (diagnosed 2026-04-18 via direct Mac
+    // SSH — 8 hrs after token-cache ship): Tauri GUI apps on macOS
+    // inherit launchd's sparse PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
+    // NOT the login-shell PATH. The claude CLI we spawn inherits that
+    // sparse PATH and passes it to MCP subprocesses. When Claude spawns
+    // `/usr/local/bin/npx @bitbonsai/mcpvault@0.11.0`, npx reads the
+    // package's bin script, whose shebang is `#!/usr/bin/env node`.
+    // `env` searches PATH for `node` — and `/usr/local/bin` (where
+    // node lives on Intel Macs / Apple Silicon via official installer)
+    // is NOT in PATH. `env: node: No such file or directory`. MCP
+    // subprocess exits immediately. Claude reports `mcp_servers:
+    // [{"name":"obsidian","status":"failed"}]` and every user message
+    // comes back as `authentication_failed` because the tool runtime
+    // never initialised.
+    //
+    // Fix: prepend the directory containing `npx` (almost always the
+    // same directory as `node`) plus the common install locations to
+    // PATH for each MCP env. Does not override caller-supplied env.
+    let mut path_dirs = Vec::<String>::new();
+    if let Some(npx) = npx_path {
+        if let Some(parent) = npx.parent() {
+            path_dirs.push(parent.to_string_lossy().to_string());
+        }
+    }
+    // Homebrew Apple Silicon + Intel defaults, and system PATH.
+    for p in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        if !path_dirs.iter().any(|d| d == p) {
+            path_dirs.push(p.to_string());
+        }
+    }
+    let injected_path = path_dirs.join(":");
+
     let mut servers = HashMap::new();
 
     if let Some(token) = google_access_token {
@@ -52,10 +93,10 @@ pub fn generate_mcp_config(
             McpServerEntry {
                 command: npx_command.clone(),
                 args: vec!["@shinzolabs/gmail-mcp@1.7.4".to_string()],
-                env: HashMap::from([(
-                    "GOOGLE_ACCESS_TOKEN".to_string(),
-                    token.to_string(),
-                )]),
+                env: HashMap::from([
+                    ("GOOGLE_ACCESS_TOKEN".to_string(), token.to_string()),
+                    ("PATH".to_string(), injected_path.clone()),
+                ]),
             },
         );
         // NOTE 2026-04-18: @cocal/google-calendar-mcp is temporarily
@@ -97,10 +138,10 @@ pub fn generate_mcp_config(
             McpServerEntry {
                 command: npx_command.clone(),
                 args: vec!["@piotr-agier/google-drive-mcp@2.0.2".to_string()],
-                env: HashMap::from([(
-                    "GOOGLE_ACCESS_TOKEN".to_string(),
-                    token.to_string(),
-                )]),
+                env: HashMap::from([
+                    ("GOOGLE_ACCESS_TOKEN".to_string(), token.to_string()),
+                    ("PATH".to_string(), injected_path.clone()),
+                ]),
             },
         );
     }
@@ -133,7 +174,10 @@ pub fn generate_mcp_config(
                         "@bitbonsai/mcpvault@0.11.0".to_string(),
                         vp.to_string_lossy().to_string(),
                     ],
-                    env: HashMap::new(),
+                    env: HashMap::from([(
+                        "PATH".to_string(),
+                        injected_path.clone(),
+                    )]),
                 },
             );
         }
@@ -306,5 +350,76 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let servers = parsed["mcpServers"].as_object().unwrap();
         assert_eq!(servers.len(), 0);
+    }
+
+    #[test]
+    fn test_path_injected_into_every_mcp_env() {
+        // Regression for the silent-MCP-failure bug diagnosed 2026-04-18
+        // via direct Mac SSH:
+        //   - Tauri GUI on macOS spawns children with launchd's sparse
+        //     PATH (no /usr/local/bin, no /opt/homebrew/bin).
+        //   - Claude CLI spawns MCP subprocesses with an env derived
+        //     from that sparse PATH + the per-MCP env block.
+        //   - npx's shebang (`#!/usr/bin/env node`) searches PATH for
+        //     `node`, finds nothing, exits. MCP never initialises.
+        //   - Claude reports `mcp_servers: [{status:"failed"}]` and
+        //     every user message returns `authentication_failed`.
+        //
+        // Fix (this file, 2026-04-18): every MCP env block contains a
+        // PATH that starts with the dirname of the resolved npx, then
+        // common install locations. This test locks in that every
+        // configured MCP carries a non-empty PATH — missing PATH on
+        // any server would regress the silent-failure bug.
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+        let fake_npx = PathBuf::from("/opt/homebrew/bin/npx");
+
+        let result = generate_mcp_config(
+            dir.path(),
+            Some(FAKE_TOKEN),
+            Some(&vault),
+            Some(&fake_npx),
+        );
+        let config_path = result.unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let servers = parsed["mcpServers"].as_object().unwrap();
+
+        for (name, entry) in servers {
+            let path = entry["env"]["PATH"].as_str().unwrap_or_else(|| {
+                panic!("MCP `{name}` missing PATH in env — would regress silent-failure bug")
+            });
+            assert!(
+                path.contains("/opt/homebrew/bin"),
+                "MCP `{name}` PATH should begin with npx parent dir, got `{path}`"
+            );
+            assert!(
+                path.contains("/usr/local/bin"),
+                "MCP `{name}` PATH should include /usr/local/bin fallback, got `{path}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_path_present_without_npx_path_arg() {
+        // Even when the caller can't resolve npx (edge case on fresh
+        // installs where binary_resolver returns None), the PATH we
+        // inject still carries the homebrew + /usr/local fallbacks so
+        // the MCP subprocess has a chance of finding node via the
+        // common install locations.
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+
+        let result = generate_mcp_config(dir.path(), None, Some(&vault), None);
+        let config_path = result.unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let path = parsed["mcpServers"]["obsidian"]["env"]["PATH"]
+            .as_str()
+            .expect("obsidian PATH must be present even when npx_path is None");
+        assert!(path.contains("/usr/local/bin"));
+        assert!(path.contains("/opt/homebrew/bin"));
     }
 }
