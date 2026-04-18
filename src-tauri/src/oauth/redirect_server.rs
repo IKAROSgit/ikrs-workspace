@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_keyring::KeyringExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -111,10 +111,32 @@ pub async fn start_redirect_server(
         // and client_secret so the refresh grant can succeed later
         // without the caller having to re-supply them — see
         // TokenPayload docstring).
+        //
+        // Populate the TokenCache BEFORE the keychain write so the
+        // very next spawn (which may race the frontend's
+        // oauth:token-stored listener callback → handleConnect) hits
+        // the cache and skips the macOS keychain prompt. Codex token-
+        // cache review 2026-04-18 flagged that the initial OAuth
+        // write path was not populating the cache, which defeated
+        // the cache's primary use-case.
+        let expires_at = chrono::Utc::now().timestamp() + expires_in;
+        {
+            let cache: tauri::State<crate::oauth::token_cache::TokenCache> = app.state();
+            cache
+                .insert(
+                    keychain_key.clone(),
+                    crate::oauth::token_cache::CachedToken {
+                        access_token: access_token.clone(),
+                        expires_at,
+                    },
+                )
+                .await;
+        }
+
         let payload = crate::oauth::token_refresh::TokenPayload {
             access_token,
             refresh_token,
-            expires_at: chrono::Utc::now().timestamp() + expires_in,
+            expires_at,
             client_id: client_id.clone(),
             client_secret: client_secret.clone(),
         };

@@ -216,3 +216,17 @@ pub async fn cancel_firebase_identity_flow(
     }
     Ok(())
 }
+
+/// Clear the in-memory token cache. Called from the frontend's
+/// logOut path so that signing out actually empties the
+/// short-lived access-token cache — otherwise a subsequent
+/// consultant signing in on the same Mac session would see cached
+/// tokens from the prior consultant. Codex token-cache review
+/// 2026-04-18 must-fix #3.
+#[tauri::command]
+pub async fn clear_token_cache(
+    cache: State<'_, crate::oauth::token_cache::TokenCache>,
+) -> Result<(), String> {
+    cache.clear().await;
+    Ok(())
+}

@@ -12,6 +12,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { auth, db } from "@/lib/firebase";
 import {
   cancelFirebaseIdentityFlow,
+  clearTokenCache,
   startFirebaseIdentityFlow,
 } from "@/lib/tauri-commands";
 import type { Consultant } from "@/types";
@@ -215,6 +216,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logOut = async () => {
+    // Clear the in-memory Google access-token cache BEFORE signing
+    // out of Firebase so subsequent sign-ins (potentially from a
+    // different consultant on the same Mac session) don't inherit
+    // the prior consultant's tokens. Codex 2026-04-18 token-cache
+    // review must-fix #3. Failure of the cache-clear is non-blocking
+    // — the tokens will naturally expire within an hour anyway.
+    clearTokenCache().catch(() => {});
     await signOut(auth);
     setConsultant(null);
   };

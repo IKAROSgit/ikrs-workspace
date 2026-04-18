@@ -1,5 +1,7 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_keyring::KeyringExt;
+
+use crate::oauth::token_cache::{CachedToken, TokenCache};
 
 const IKRS_SERVICE: &str = "ikrs-workspace";
 
@@ -38,7 +40,24 @@ impl TokenPayload {
 
 /// Read the token from keychain, refresh if expired, return a valid access_token.
 /// Returns Err if no token exists, JSON is corrupt, or refresh fails.
+///
+/// Cache-first behaviour (2026-04-18): checks the in-memory
+/// `TokenCache` before hitting the OS keychain. On macOS ad-hoc
+/// builds the keychain access prompts for every read; caching the
+/// short-lived access token in memory drops the prompt count from
+/// N-per-spawn to 1-per-app-session for a given engagement. On
+/// refresh-failure paths we do NOT explicitly evict the cache — the
+/// expired entry is naturally ignored by `get_fresh` (which inline-
+/// checks expiry), so subsequent calls retry from keychain and can
+/// surface the re-auth prompt cleanly.
 pub async fn refresh_if_needed(keychain_key: &str, app: &AppHandle) -> Result<String, String> {
+    let cache: tauri::State<TokenCache> = app.state();
+
+    // Fast path: cached token still within expiry.
+    if let Some(cached) = cache.get_fresh(keychain_key).await {
+        return Ok(cached.access_token);
+    }
+
     let raw = app
         .keyring()
         .get_password(IKRS_SERVICE, keychain_key)
@@ -51,6 +70,17 @@ pub async fn refresh_if_needed(keychain_key: &str, app: &AppHandle) -> Result<St
     })?;
 
     if !payload.is_expired() {
+        // Populate the cache so subsequent spawns in this app
+        // session skip the keychain (and its macOS prompt) entirely.
+        cache
+            .insert(
+                keychain_key.to_string(),
+                CachedToken {
+                    access_token: payload.access_token.clone(),
+                    expires_at: payload.expires_at,
+                },
+            )
+            .await;
         return Ok(payload.access_token);
     }
 
@@ -93,6 +123,18 @@ pub async fn refresh_if_needed(keychain_key: &str, app: &AppHandle) -> Result<St
     app.keyring()
         .set_password(IKRS_SERVICE, keychain_key, &updated_json)
         .map_err(|e| format!("Keychain update failed: {e}"))?;
+
+    // Mirror the post-refresh token into the cache so the next
+    // refresh_if_needed call skips the keychain read + its prompt.
+    cache
+        .insert(
+            keychain_key.to_string(),
+            CachedToken {
+                access_token: new_access_token.clone(),
+                expires_at: updated.expires_at,
+            },
+        )
+        .await;
 
     Ok(new_access_token)
 }

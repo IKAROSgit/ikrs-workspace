@@ -53,6 +53,7 @@ pub fn run() {
         .plugin(tauri_plugin_keyring::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::oauth::OAuthState::default())
+        .manage(oauth::token_cache::TokenCache::default())
         .manage(ClaudeSessionManager::new())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("No app data dir");
@@ -79,6 +80,7 @@ pub fn run() {
             commands::oauth::cancel_oauth_flow,
             commands::oauth::start_firebase_identity_flow,
             commands::oauth::cancel_firebase_identity_flow,
+            commands::oauth::clear_token_cache,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,

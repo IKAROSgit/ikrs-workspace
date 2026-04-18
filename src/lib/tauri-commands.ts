@@ -69,6 +69,13 @@ export async function cancelFirebaseIdentityFlow(): Promise<void> {
   return invoke("cancel_firebase_identity_flow");
 }
 
+// Clear the in-memory Google access-token cache. Called from logOut
+// so the next consultant sign-in does not see the prior consultant's
+// cached tokens.
+export async function clearTokenCache(): Promise<void> {
+  return invoke("clear_token_cache");
+}
+
 // Vault lifecycle
 export async function createVault(clientSlug: string): Promise<string> {
   return invoke("create_vault", { clientSlug });
