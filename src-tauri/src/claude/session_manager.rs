@@ -79,6 +79,28 @@ impl ClaudeSessionManager {
         if let Some(ref config_path) = mcp_config_path {
             args.push("--mcp-config".to_string());
             args.push(config_path.clone());
+            // Strict mode: don't merge user-level / system-level MCP
+            // configs with our per-engagement one. Without this flag
+            // Claude CLI inherits the consultant's personal MCPs
+            // (e.g. chrome-devtools-mcp, mcp-remote to custom
+            // endpoints), which break the subprocess in two ways:
+            //   1. They're designed for the desktop Claude.app
+            //      environment and may hang when started from a Tauri
+            //      subprocess with minimal env (proven 2026-04-18 on
+            //      Moe's Mac — chrome-devtools + mcp-remote hung for
+            //      54 minutes, blocking system.init forever).
+            //   2. They create per-client NDA leak risk — BLR's Claude
+            //      should not have access to consultant's personal
+            //      Nimble MCP or similar.
+            //
+            // Codex Phase 3 scope review (2026-04-11) recommended
+            // non-strict as default. That recommendation was wrong for
+            // this product: per-engagement isolation is a hard
+            // requirement, not a policy knob. Forcing strict is the
+            // correct call; individual consultants who want their
+            // user-level MCPs can still use Claude Code directly
+            // outside the workspace app.
+            args.push("--strict-mcp-config".to_string());
         }
 
         // Resolve claude binary path from app state (resolved at startup)
