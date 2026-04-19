@@ -99,9 +99,29 @@ impl MessageIdGen {
     }
 }
 
+/// Diagnostic log file. 2026-04-19 addition to debug the
+/// "Connecting..." wedge — the webview's DevTools wouldn't open and
+/// we needed out-of-process visibility into what the Rust parser
+/// was actually receiving from the Claude CLI subprocess. The file
+/// is truncated on each parser start. Kept in `/tmp` (ephemeral) so
+/// it doesn't leak user data between sessions.
+fn dbg_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/ikrs-stream.log")
+    {
+        let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
+
 /// Reads Claude CLI stdout line-by-line and emits typed Tauri events.
 /// Returns when the stream ends (process exited or pipe broken).
 pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
+    let _ = std::fs::remove_file("/tmp/ikrs-stream.log");
+    dbg_log("parse_stream started");
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
     let mut msg_id_gen = MessageIdGen::new();
@@ -114,13 +134,16 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
                 if line.trim().is_empty() {
                     continue;
                 }
+                let preview: String = line.chars().take(200).collect();
+                dbg_log(&format!("LINE: {preview}"));
                 handle_line(&line, &app, &mut msg_id_gen, &mut current_msg_id, &mut tool_name_map);
             }
             Ok(None) => {
-                // EOF — process exited or pipe closed
+                dbg_log("EOF — process exited or pipe closed");
                 break;
             }
             Err(e) => {
+                dbg_log(&format!("stream error: {e}"));
                 log::error!("Stream read error: {e}");
                 let _ = app.emit(
                     "claude:error",
@@ -132,6 +155,7 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
             }
         }
     }
+    dbg_log("parse_stream exiting");
 }
 
 fn handle_line(
@@ -188,7 +212,17 @@ fn handle_system_event(raw: &serde_json::Value, app: &AppHandle) {
                 model: raw["model"].as_str().unwrap_or("unknown").to_string(),
                 cwd: raw["cwd"].as_str().unwrap_or("").to_string(),
             };
-            let _ = app.emit("claude:session-ready", payload);
+            dbg_log(&format!(
+                "EMIT claude:session-ready session_id={} model={} tools_n={}",
+                payload.session_id,
+                payload.model,
+                payload.tools.len()
+            ));
+            let result = app.emit("claude:session-ready", &payload);
+            dbg_log(&format!(
+                "emit result: {:?}",
+                result.as_ref().map(|_| "ok").map_err(|e| e.to_string())
+            ));
         }
         _ => {
             log::debug!("Unknown system subtype: {}", subtype);
