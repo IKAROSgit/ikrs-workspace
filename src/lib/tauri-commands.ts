@@ -113,6 +113,75 @@ export async function listGmailInbox(
   });
 }
 
+export type GmailSendResult =
+  | { status: "ok"; id: string; thread_id: string }
+  | { status: "not_connected" }
+  | { status: "scope_missing" }
+  | { status: "rate_limited" }
+  | { status: "network" }
+  | { status: "invalid"; message: string }
+  | { status: "other"; code: number | null };
+
+export async function sendGmailMessage(args: {
+  engagementId: string;
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string | null;
+  bcc?: string | null;
+}): Promise<GmailSendResult> {
+  return invoke("send_gmail_message", {
+    engagementId: args.engagementId,
+    to: args.to,
+    subject: args.subject,
+    body: args.body,
+    cc: args.cc ?? null,
+    bcc: args.bcc ?? null,
+  });
+}
+
+export type SimpleGoogleResult =
+  | { status: "ok" }
+  | { status: "not_connected" }
+  | { status: "network" }
+  | { status: "other"; code: number | null };
+
+export async function markGmailRead(
+  engagementId: string,
+  messageId: string,
+): Promise<SimpleGoogleResult> {
+  return invoke("mark_gmail_read", { engagementId, messageId });
+}
+
+export type CreateEventResult =
+  | { status: "ok"; id: string; html_link: string }
+  | { status: "not_connected" }
+  | { status: "scope_missing" }
+  | { status: "rate_limited" }
+  | { status: "network" }
+  | { status: "invalid"; message: string }
+  | { status: "other"; code: number | null };
+
+export async function createCalendarEvent(args: {
+  engagementId: string;
+  summary: string;
+  startIso: string;
+  endIso: string;
+  location?: string | null;
+  description?: string | null;
+  attendees?: string[];
+}): Promise<CreateEventResult> {
+  return invoke("create_calendar_event", {
+    engagementId: args.engagementId,
+    summary: args.summary,
+    startIso: args.startIso,
+    endIso: args.endIso,
+    location: args.location ?? null,
+    description: args.description ?? null,
+    attendees: args.attendees ?? [],
+  });
+}
+
 // Vault lifecycle
 export async function createVault(clientSlug: string): Promise<string> {
   return invoke("create_vault", { clientSlug });

@@ -1,13 +1,18 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCw, Calendar, CalendarPlus } from "lucide-react";
-import { useCalendar } from "@/hooks/useCalendar";
+import { useCalendar, type CalendarEvent } from "@/hooks/useCalendar";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { OfflineBanner } from "@/components/OfflineBanner";
+import { MeetingPrepPanel } from "@/components/calendar/MeetingPrepPanel";
+import { QuickAddEventModal } from "@/components/calendar/QuickAddEventModal";
 
 export default function CalendarView() {
   const { events, loading, error, isConnected, refresh } = useCalendar();
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
+  const [openEvent, setOpenEvent] = useState<CalendarEvent | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   if (!activeEngagementId) {
     return (
@@ -36,7 +41,12 @@ export default function CalendarView() {
           <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setQuickAddOpen(true)}
+            title="New event"
+          >
             <CalendarPlus size={14} />
           </Button>
         </div>
@@ -48,55 +58,70 @@ export default function CalendarView() {
         </div>
       )}
 
-      <ScrollArea className="flex-1">
-        {events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <p className="text-sm">
-              {loading ? "Loading events..." : "No upcoming events."}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className="flex flex-col gap-1 px-4 py-3 hover:bg-accent/50"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium flex-1 truncate">
-                    {event.summary || "(untitled)"}
-                  </span>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {formatEventTime(event.start, event.end)}
-                  </span>
-                </div>
-                {event.location && (
-                  <span className="text-xs text-muted-foreground truncate">
-                    📍 {event.location}
-                  </span>
-                )}
-                {event.attendees.length > 0 && (
-                  <span className="text-xs text-muted-foreground truncate">
-                    👥 {event.attendees.slice(0, 3).join(", ")}
-                    {event.attendees.length > 3 &&
-                      ` +${event.attendees.length - 3}`}
-                  </span>
-                )}
-                {event.hangout_link && (
-                  <a
-                    href={event.hangout_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-500 hover:underline truncate"
-                  >
-                    🎥 Meet link
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
+      <div className="flex-1 flex overflow-hidden">
+        <ScrollArea className="flex-1">
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <p className="text-sm">
+                {loading ? "Loading events..." : "No upcoming events."}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {events.map((event) => (
+                <button
+                  type="button"
+                  key={event.id}
+                  onClick={() => setOpenEvent(event)}
+                  className={`w-full text-left flex flex-col gap-1 px-4 py-3 hover:bg-accent/50 cursor-pointer ${
+                    openEvent?.id === event.id ? "bg-accent/70" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium flex-1 truncate">
+                      {event.summary || "(untitled)"}
+                    </span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {formatEventTime(event.start, event.end)}
+                    </span>
+                  </div>
+                  {event.location && (
+                    <span className="text-xs text-muted-foreground truncate">
+                      📍 {event.location}
+                    </span>
+                  )}
+                  {event.attendees.length > 0 && (
+                    <span className="text-xs text-muted-foreground truncate">
+                      👥 {event.attendees.slice(0, 3).join(", ")}
+                      {event.attendees.length > 3 &&
+                        ` +${event.attendees.length - 3}`}
+                    </span>
+                  )}
+                  {event.hangout_link && (
+                    <span className="text-xs text-blue-500 truncate">
+                      🎥 Meet link
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+        {openEvent && (
+          <MeetingPrepPanel
+            event={openEvent}
+            onClose={() => setOpenEvent(null)}
+          />
         )}
-      </ScrollArea>
+      </div>
+      {quickAddOpen && (
+        <QuickAddEventModal
+          onClose={() => {
+            setQuickAddOpen(false);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

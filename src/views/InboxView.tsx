@@ -1,13 +1,28 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { RefreshCw, Mail, MailOpen } from "lucide-react";
+import { RefreshCw, Mail, MailOpen, Pencil } from "lucide-react";
 import { useGmail } from "@/hooks/useGmail";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { OfflineBanner } from "@/components/OfflineBanner";
+import { ComposeEmailModal } from "@/components/inbox/ComposeEmailModal";
+import { markGmailRead } from "@/lib/tauri-commands";
 
 export default function InboxView() {
   const { emails, loading, error, isConnected, refresh } = useGmail();
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
+  const [composeOpen, setComposeOpen] = useState(false);
+
+  const handleMarkRead = async (id: string) => {
+    if (!activeEngagementId) return;
+    try {
+      await markGmailRead(activeEngagementId, id);
+      refresh();
+    } catch {
+      // Non-fatal; refresh anyway so UI isn't lying.
+      refresh();
+    }
+  };
 
   if (!activeEngagementId) {
     return (
@@ -32,9 +47,19 @@ export default function InboxView() {
       <OfflineBanner feature="Gmail" />
       <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">Inbox</h2>
-        <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-        </Button>
+        <div className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setComposeOpen(true)}
+            title="Compose new email"
+          >
+            <Pencil size={14} />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -54,6 +79,7 @@ export default function InboxView() {
             {emails.map((email) => (
               <div
                 key={email.id}
+                onClick={() => !email.isRead && handleMarkRead(email.id)}
                 className={`flex flex-col gap-1 px-4 py-3 hover:bg-accent/50 cursor-pointer ${
                   !email.isRead ? "bg-accent/20" : ""
                 }`}
@@ -77,6 +103,9 @@ export default function InboxView() {
           </div>
         )}
       </ScrollArea>
+      {composeOpen && (
+        <ComposeEmailModal onClose={() => setComposeOpen(false)} />
+      )}
     </div>
   );
 }

@@ -178,6 +178,128 @@ pub async fn list_calendar_events(
     Ok(CalendarResult::Ok { events })
 }
 
+/// Create a Calendar event on the user's primary calendar.
+/// `start_iso` / `end_iso` are RFC 3339; all-day events not
+/// supported in this first iteration (use timed events with UTC Z
+/// suffix if caller wants full-day semantics for now).
+#[tauri::command]
+pub async fn create_calendar_event(
+    engagement_id: String,
+    summary: String,
+    start_iso: String,
+    end_iso: String,
+    location: Option<String>,
+    description: Option<String>,
+    attendees: Vec<String>,
+    app: AppHandle,
+) -> Result<CreateEventResult, String> {
+    let keychain_key = make_keychain_key(&engagement_id, "google");
+    let token = match refresh_if_needed(&keychain_key, &app).await {
+        Ok(t) => t,
+        Err(e) => {
+            log::info!("create_calendar_event: no token — {e}");
+            return Ok(CreateEventResult::NotConnected);
+        }
+    };
+
+    if summary.trim().is_empty() {
+        return Ok(CreateEventResult::Invalid {
+            message: "Summary required".to_string(),
+        });
+    }
+    if start_iso.trim().is_empty() || end_iso.trim().is_empty() {
+        return Ok(CreateEventResult::Invalid {
+            message: "Start and end required".to_string(),
+        });
+    }
+
+    let mut body = serde_json::json!({
+        "summary": summary,
+        "start": { "dateTime": start_iso },
+        "end": { "dateTime": end_iso },
+    });
+    if let Some(loc) = location.filter(|s| !s.trim().is_empty()) {
+        body["location"] = serde_json::Value::String(loc);
+    }
+    if let Some(desc) = description.filter(|s| !s.trim().is_empty()) {
+        body["description"] = serde_json::Value::String(desc);
+    }
+    if !attendees.is_empty() {
+        body["attendees"] = serde_json::Value::Array(
+            attendees
+                .into_iter()
+                .filter(|a| !a.trim().is_empty())
+                .map(|email| serde_json::json!({ "email": email }))
+                .collect(),
+        );
+    }
+
+    let url = format!(
+        "{CALENDAR_BASE}/calendars/primary/events?sendUpdates=all",
+    );
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("calendar create transport: {e}");
+            return Ok(CreateEventResult::Network);
+        }
+    };
+
+    let code = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        log::warn!(
+            "calendar create HTTP {code} body: {}",
+            truncate(&body_text, 400)
+        );
+        let lower = body_text.to_lowercase();
+        return Ok(match code {
+            401 => CreateEventResult::NotConnected,
+            403 if lower.contains("insufficientpermissions")
+                || lower.contains("scope_insufficient") =>
+            {
+                CreateEventResult::ScopeMissing
+            }
+            429 => CreateEventResult::RateLimited,
+            _ => CreateEventResult::Other { code: Some(code) },
+        });
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CreateResp {
+        id: String,
+        #[serde(rename = "htmlLink")]
+        html_link: Option<String>,
+    }
+    let body: CreateResp = resp
+        .json()
+        .await
+        .map_err(|e| format!("calendar create parse: {e}"))?;
+    Ok(CreateEventResult::Ok {
+        id: body.id,
+        html_link: body.html_link.unwrap_or_default(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum CreateEventResult {
+    Ok { id: String, html_link: String },
+    NotConnected,
+    ScopeMissing,
+    RateLimited,
+    Network,
+    Invalid { message: String },
+    Other { code: Option<u16> },
+}
+
 async fn classify_http_error(resp: reqwest::Response, op: &str) -> CalendarResult {
     let status = resp.status();
     let code = status.as_u16();

@@ -295,6 +295,205 @@ async fn fetch_message_metadata(
     })
 }
 
+/// Send an email via the Gmail REST API.
+///
+/// Uses the user's `me` account (the token's owner). Encodes the
+/// RFC 2822 message as base64url per API contract. Scope required
+/// is `gmail.modify` (we already grant that for Inbox reads) or
+/// `gmail.send`. Our token has `gmail.modify` so this works without
+/// a scope bump.
+#[tauri::command]
+pub async fn send_gmail_message(
+    engagement_id: String,
+    to: String,
+    subject: String,
+    body: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    app: AppHandle,
+) -> Result<SendResult, String> {
+    let keychain_key = make_keychain_key(&engagement_id, "google");
+    let token = match refresh_if_needed(&keychain_key, &app).await {
+        Ok(t) => t,
+        Err(e) => {
+            log::info!("send_gmail_message: no token — {e}");
+            return Ok(SendResult::NotConnected);
+        }
+    };
+
+    if to.trim().is_empty() {
+        return Ok(SendResult::Invalid {
+            message: "To address required".to_string(),
+        });
+    }
+
+    let raw = build_rfc2822(&to, &subject, &body, cc.as_deref(), bcc.as_deref());
+    let raw_b64url = base64_urlsafe_nopad(&raw);
+
+    let url = format!("{GMAIL_BASE}/users/me/messages/send");
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "raw": raw_b64url }))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("gmail send transport error: {e}");
+            return Ok(SendResult::Network);
+        }
+    };
+
+    let code = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        log::warn!("gmail send HTTP {code} body: {}", truncate(&body_text, 400));
+        return Ok(match code {
+            401 => SendResult::NotConnected,
+            403 if body_text.to_lowercase().contains("insufficientpermissions") => {
+                SendResult::ScopeMissing
+            }
+            429 => SendResult::RateLimited,
+            _ => SendResult::Other { code: Some(code) },
+        });
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SendResp {
+        id: String,
+        #[serde(rename = "threadId")]
+        thread_id: Option<String>,
+    }
+    let body: SendResp = resp
+        .json()
+        .await
+        .map_err(|e| format!("gmail send parse: {e}"))?;
+    Ok(SendResult::Ok {
+        id: body.id,
+        thread_id: body.thread_id.unwrap_or_default(),
+    })
+}
+
+/// Mark a Gmail message as read by removing the `UNREAD` label.
+#[tauri::command]
+pub async fn mark_gmail_read(
+    engagement_id: String,
+    message_id: String,
+    app: AppHandle,
+) -> Result<SimpleResult, String> {
+    let keychain_key = make_keychain_key(&engagement_id, "google");
+    let token = match refresh_if_needed(&keychain_key, &app).await {
+        Ok(t) => t,
+        Err(e) => {
+            log::info!("mark_gmail_read: no token — {e}");
+            return Ok(SimpleResult::NotConnected);
+        }
+    };
+    let url = format!(
+        "{GMAIL_BASE}/users/me/messages/{message_id}/modify",
+        message_id = urlencoding::encode(&message_id),
+    );
+    let client = reqwest::Client::new();
+    let resp = match client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "removeLabelIds": ["UNREAD"] }))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("gmail mark-read transport: {e}");
+            return Ok(SimpleResult::Network);
+        }
+    };
+    let code = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        log::warn!("gmail mark-read HTTP {code} body: {}", truncate(&body_text, 200));
+        return Ok(match code {
+            401 => SimpleResult::NotConnected,
+            _ => SimpleResult::Other { code: Some(code) },
+        });
+    }
+    Ok(SimpleResult::Ok)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum SendResult {
+    Ok { id: String, thread_id: String },
+    NotConnected,
+    ScopeMissing,
+    RateLimited,
+    Network,
+    Invalid { message: String },
+    Other { code: Option<u16> },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum SimpleResult {
+    Ok,
+    NotConnected,
+    Network,
+    Other { code: Option<u16> },
+}
+
+/// Build an RFC 2822 MIME message. Headers are ASCII-only here —
+/// the body is UTF-8 and we mark the message as `text/plain;
+/// charset="UTF-8"` with `Content-Transfer-Encoding: 8bit`. Subject
+/// and To/Cc/Bcc values that contain non-ASCII are wrapped with
+/// RFC 2047 encoded-word syntax (`=?UTF-8?B?...?=`) to keep the
+/// header ASCII-clean.
+fn build_rfc2822(
+    to: &str,
+    subject: &str,
+    body: &str,
+    cc: Option<&str>,
+    bcc: Option<&str>,
+) -> String {
+    let mut headers = String::new();
+    headers.push_str(&format!("To: {}\r\n", encode_header_value(to)));
+    if let Some(c) = cc.filter(|s| !s.trim().is_empty()) {
+        headers.push_str(&format!("Cc: {}\r\n", encode_header_value(c)));
+    }
+    if let Some(b) = bcc.filter(|s| !s.trim().is_empty()) {
+        headers.push_str(&format!("Bcc: {}\r\n", encode_header_value(b)));
+    }
+    headers.push_str(&format!(
+        "Subject: {}\r\n",
+        encode_header_value(subject)
+    ));
+    headers.push_str("MIME-Version: 1.0\r\n");
+    headers.push_str("Content-Type: text/plain; charset=\"UTF-8\"\r\n");
+    headers.push_str("Content-Transfer-Encoding: 8bit\r\n");
+    headers.push_str("\r\n"); // end of headers
+    headers.push_str(body);
+    headers
+}
+
+/// Encode a header value using RFC 2047 if it contains non-ASCII.
+/// Keeps pure-ASCII values unchanged (including display-name
+/// formats like `Moe <moe@ikaros.ae>`).
+fn encode_header_value(v: &str) -> String {
+    if v.is_ascii() {
+        v.to_string()
+    } else {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(v.as_bytes());
+        format!("=?UTF-8?B?{b64}?=")
+    }
+}
+
+/// Base64url (no padding) — Gmail API's `raw` field format.
+fn base64_urlsafe_nopad(input: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(input.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +509,76 @@ mod tests {
         let t = truncate(&s, 50);
         assert_eq!(t.chars().count(), 50);
         assert!(t.ends_with("..."));
+    }
+
+    #[test]
+    fn test_build_rfc2822_ascii() {
+        let raw = build_rfc2822(
+            "alice@example.com",
+            "Hello",
+            "Body text\nwith newline",
+            None,
+            None,
+        );
+        assert!(raw.contains("To: alice@example.com\r\n"));
+        assert!(raw.contains("Subject: Hello\r\n"));
+        assert!(raw.contains("MIME-Version: 1.0\r\n"));
+        assert!(raw.contains("Content-Type: text/plain; charset=\"UTF-8\"\r\n"));
+        assert!(raw.contains("\r\n\r\nBody text"));
+        assert!(!raw.contains("Cc:"));
+        assert!(!raw.contains("Bcc:"));
+    }
+
+    #[test]
+    fn test_build_rfc2822_with_cc_bcc() {
+        let raw = build_rfc2822(
+            "a@x.com",
+            "S",
+            "B",
+            Some("c@x.com"),
+            Some("d@x.com"),
+        );
+        assert!(raw.contains("Cc: c@x.com\r\n"));
+        assert!(raw.contains("Bcc: d@x.com\r\n"));
+    }
+
+    #[test]
+    fn test_build_rfc2822_ignores_empty_cc() {
+        let raw = build_rfc2822("a@x.com", "S", "B", Some(""), Some("   "));
+        assert!(!raw.contains("Cc:"));
+        assert!(!raw.contains("Bcc:"));
+    }
+
+    #[test]
+    fn test_encode_header_value_rfc2047_for_nonascii() {
+        // Arabic subject must be RFC 2047 encoded so the header
+        // stays ASCII-clean on the wire.
+        let enc = encode_header_value("مرحبا");
+        assert!(enc.starts_with("=?UTF-8?B?"));
+        assert!(enc.ends_with("?="));
+        assert!(enc.is_ascii(), "encoded header must be pure ASCII: {enc}");
+    }
+
+    #[test]
+    fn test_encode_header_value_passes_ascii_through() {
+        let v = "Moe Aqeel <moe@ikaros.ae>";
+        assert_eq!(encode_header_value(v), v);
+    }
+
+    #[test]
+    fn test_base64_urlsafe_nopad() {
+        // "Hello, world!" in base64url-nopad is SGVsbG8sIHdvcmxkIQ
+        assert_eq!(
+            base64_urlsafe_nopad("Hello, world!"),
+            "SGVsbG8sIHdvcmxkIQ"
+        );
+        // No `=` padding, `+` → `-`, `/` → `_`. The input
+        // `?>?>?>` produces bytes that b64-std would emit with a
+        // `/` — here we expect `_` instead.
+        let encoded = base64_urlsafe_nopad("?>?>?>");
+        assert!(!encoded.contains('='));
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
     }
 
     #[test]

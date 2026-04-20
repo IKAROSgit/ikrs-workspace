@@ -10,6 +10,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useMcpStore } from "@/stores/mcpStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { CommandPalette } from "@/components/CommandPalette";
 
 function AppContent() {
   const activeView = useUiStore((s) => s.activeView);
@@ -40,6 +41,7 @@ function AppContent() {
         </div>
       </div>
       <StatusBar connectedEmail={undefined} mcpStatuses={mcpServers} isOnline={isOnline} />
+      <CommandPalette />
     </div>
   );
 }
