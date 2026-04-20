@@ -476,14 +476,44 @@ fn build_rfc2822(
 }
 
 /// Encode a header value using RFC 2047 if it contains non-ASCII.
-/// Keeps pure-ASCII values unchanged (including display-name
+/// Pure-ASCII values pass through unchanged (including display-name
 /// formats like `Moe <moe@ikaros.ae>`).
+///
+/// Security (Codex 2026-04-20 HOLD on b5dd830): ALL control
+/// characters (including CR, LF, NUL, and anything < 0x20 except
+/// horizontal tab) are stripped before interpolation. Without this,
+/// an input like `alice@example.com\r\nBcc: attacker@evil.com`
+/// would inject an additional header into the raw MIME message —
+/// silent BCC exfiltration, Reply-To spoofing, or arbitrary
+/// header manipulation attributable to the consultant's sending
+/// address. The base64url wrapping of the whole body hides this
+/// from any naive inspection; Google's API sends it as-is.
+///
+/// Stripping is preferred over rejecting so that a copy-paste of
+/// "contact@x.com\n" (trailing newline) from another mailer still
+/// works. Any other control character is suspicious enough to drop.
 fn encode_header_value(v: &str) -> String {
-    if v.is_ascii() {
-        v.to_string()
+    // Truncate at the FIRST CR or LF rather than silently stripping
+    // them. Stripping (`alice@x.com\r\nBcc: evil` → `alice@x.comBcc: evil`)
+    // collapses an injection attempt into a single malformed token
+    // that Gmail's address parser may still read creatively. Cutting
+    // at the first line-break preserves only the intended value and
+    // drops everything after. Also strip any other control chars
+    // (< 0x20 except tab) that remain.
+    let head = match v.find(|c: char| c == '\r' || c == '\n') {
+        Some(i) => &v[..i],
+        None => v,
+    };
+    let sanitised: String = head
+        .chars()
+        .filter(|c| *c == '\t' || !c.is_control())
+        .collect();
+    if sanitised.is_ascii() {
+        sanitised
     } else {
         use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(v.as_bytes());
+        let b64 = base64::engine::general_purpose::STANDARD
+            .encode(sanitised.as_bytes());
         format!("=?UTF-8?B?{b64}?=")
     }
 }
@@ -563,6 +593,54 @@ mod tests {
     fn test_encode_header_value_passes_ascii_through() {
         let v = "Moe Aqeel <moe@ikaros.ae>";
         assert_eq!(encode_header_value(v), v);
+    }
+
+    #[test]
+    fn test_encode_header_value_strips_crlf_injection() {
+        // Codex 2026-04-20 must-fix: CR/LF in a header value must
+        // never survive to the raw MIME body, or an attacker can
+        // inject arbitrary extra headers.
+        let evil = "alice@example.com\r\nBcc: attacker@evil.com";
+        let out = encode_header_value(evil);
+        assert!(
+            !out.contains('\r') && !out.contains('\n'),
+            "header value must not contain CR or LF, got {out:?}"
+        );
+        assert!(
+            !out.to_lowercase().contains("bcc:"),
+            "stripped output still contains an injected Bcc header: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_header_value_strips_null_and_control_chars() {
+        let out = encode_header_value("x\0y\x07z\x1bw");
+        // All control chars (< 0x20 except \t) must be stripped.
+        assert_eq!(out, "xyzw");
+    }
+
+    #[test]
+    fn test_build_rfc2822_neutralises_injection_payload() {
+        // End-to-end: an injection attempt in `to` must not produce
+        // a raw message with an attacker-controlled Bcc line.
+        let raw = build_rfc2822(
+            "alice@example.com\r\nBcc: evil@x.com",
+            "Subject\r\nX-Priority: 1",
+            "body",
+            None,
+            None,
+        );
+        // Only our own Bcc path (none in this case) — no attacker
+        // Bcc should appear.
+        assert!(
+            !raw.to_lowercase().contains("bcc:"),
+            "injection survived into raw message: {raw:?}"
+        );
+        // Subject should also have been neutralised.
+        assert!(
+            !raw.contains("X-Priority"),
+            "subject injection survived: {raw:?}"
+        );
     }
 
     #[test]

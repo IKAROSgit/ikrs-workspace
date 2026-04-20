@@ -90,10 +90,27 @@ export function ComposeEmailModal({
     }
   };
 
+  const hasContent =
+    to.trim() !== "" ||
+    cc.trim() !== "" ||
+    subject.trim() !== "" ||
+    body.trim() !== "";
+
+  const confirmClose = () => {
+    if (sent || !hasContent) {
+      onClose();
+      return;
+    }
+    if (window.confirm("Discard this draft? Your message will be lost.")) {
+      onClose();
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm"
-      onClick={onClose}
+      // No auto-close on backdrop click — drafts must not be lost.
+      // Codex 2026-04-20 data-loss guard. Cancel/X button confirms.
     >
       <div
         className="w-full max-w-2xl rounded-lg border border-border bg-popover shadow-2xl overflow-hidden"
@@ -101,7 +118,7 @@ export function ComposeEmailModal({
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-border">
           <h3 className="text-sm font-semibold">New message</h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={confirmClose}>
             <X size={14} />
           </Button>
         </div>
@@ -151,7 +168,7 @@ export function ComposeEmailModal({
           )}
         </div>
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-t border-border">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}>
+          <Button variant="ghost" size="sm" onClick={confirmClose} disabled={sending}>
             Cancel
           </Button>
           <Button size="sm" onClick={handleSend} disabled={sending || sent}>

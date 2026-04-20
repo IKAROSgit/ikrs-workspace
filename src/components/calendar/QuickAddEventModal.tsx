@@ -97,10 +97,25 @@ export function QuickAddEventModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const hasContent =
+    summary.trim() !== "" ||
+    location.trim() !== "" ||
+    attendees.trim() !== "" ||
+    description.trim() !== "";
+
+  const confirmClose = () => {
+    if (done || !hasContent) {
+      onClose();
+      return;
+    }
+    if (window.confirm("Discard this event? Your input will be lost.")) {
+      onClose();
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm"
-      onClick={onClose}
     >
       <div
         className="w-full max-w-lg rounded-lg border border-border bg-popover shadow-2xl overflow-hidden"
@@ -108,7 +123,7 @@ export function QuickAddEventModal({ onClose }: { onClose: () => void }) {
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-border">
           <h3 className="text-sm font-semibold">New event</h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={confirmClose}>
             <X size={14} />
           </Button>
         </div>
@@ -192,7 +207,7 @@ export function QuickAddEventModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-t border-border">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
+          <Button variant="ghost" size="sm" onClick={confirmClose} disabled={submitting}>
             Cancel
           </Button>
           <Button size="sm" onClick={handleCreate} disabled={submitting || !!done}>

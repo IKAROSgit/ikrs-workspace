@@ -212,6 +212,36 @@ pub async fn create_calendar_event(
             message: "Start and end required".to_string(),
         });
     }
+    // Length caps — Google Calendar renders description as HTML in
+    // its UI and in invitation emails. Even though consultants are
+    // the authors, a Claude-drafted description pasted back in
+    // could carry a phishing payload targeted at external invitees.
+    // Capping length limits blast radius; full HTML sanitisation
+    // is a deeper follow-up if needed.
+    const MAX_SUMMARY: usize = 300;
+    const MAX_LOCATION: usize = 1024;
+    const MAX_DESCRIPTION: usize = 8192;
+    if summary.chars().count() > MAX_SUMMARY {
+        return Ok(CreateEventResult::Invalid {
+            message: format!("Summary too long (max {MAX_SUMMARY} chars)"),
+        });
+    }
+    if let Some(ref loc) = location {
+        if loc.chars().count() > MAX_LOCATION {
+            return Ok(CreateEventResult::Invalid {
+                message: format!("Location too long (max {MAX_LOCATION} chars)"),
+            });
+        }
+    }
+    if let Some(ref desc) = description {
+        if desc.chars().count() > MAX_DESCRIPTION {
+            return Ok(CreateEventResult::Invalid {
+                message: format!(
+                    "Description too long (max {MAX_DESCRIPTION} chars)"
+                ),
+            });
+        }
+    }
 
     let mut body = serde_json::json!({
         "summary": summary,
