@@ -105,8 +105,41 @@ function registerListeners(): void {
     })
   );
 
+  // session-id guarded lifecycle handlers.
+  //
+  // Why: the useClaudeStream module registers listeners once at load
+  // and lives for the whole app session. Over that lifetime many
+  // Claude subprocesses come and go — user switches engagements, I
+  // kill-and-respawn during dev, the monitor task detects exits of
+  // evicted sessions, etc. Each spawn emits its own session-ended /
+  // session-crashed events from its own monitor_process task. Those
+  // events carry the session_id of the dying process. Without a
+  // guard, a late-arriving "session-crashed" from a PREVIOUS session
+  // clobbers the live session's state in the store — UI flips to
+  // status:"error" with "Session crashed: Claude CLI error" even
+  // though the real current session is happily running.
+  //
+  // Diagnosed 2026-04-20: Moe sees "crashed" in the UI while the
+  // Rust log shows the current session succeeded. The stale monitor
+  // event from the killed-for-rebuild previous claude was overwriting
+  // his fresh session's state.
+  //
+  // Fix: compare event.payload.session_id against the store's
+  // current sessionId. Ignore if mismatch.
   register(() =>
     listen<SessionEndPayload>("claude:session-ended", (event) => {
+      const current = useClaudeStore.getState().sessionId;
+      if (current && event.payload.session_id !== current) {
+        // eslint-disable-next-line no-console
+        console.debug(
+          "[useClaudeStream] ignoring stale session-ended for",
+          event.payload.session_id,
+          "(current=",
+          current,
+          ")"
+        );
+        return;
+      }
       store().setDisconnected(event.payload.reason);
       useMcpStore.getState().setServers([]);
     })
@@ -114,6 +147,18 @@ function registerListeners(): void {
 
   register(() =>
     listen<SessionEndPayload>("claude:session-crashed", (event) => {
+      const current = useClaudeStore.getState().sessionId;
+      if (current && event.payload.session_id !== current) {
+        // eslint-disable-next-line no-console
+        console.debug(
+          "[useClaudeStream] ignoring stale session-crashed for",
+          event.payload.session_id,
+          "(current=",
+          current,
+          ")"
+        );
+        return;
+      }
       store().setError(`Session crashed: ${event.payload.reason}`);
     })
   );

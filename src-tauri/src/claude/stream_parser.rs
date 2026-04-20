@@ -119,7 +119,19 @@ fn dbg_log(msg: &str) {
 
 /// Reads Claude CLI stdout line-by-line and emits typed Tauri events.
 /// Returns when the stream ends (process exited or pipe broken).
-pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
+///
+/// `internal_session_id` is the uuid we assigned when spawning.
+/// Claude's stream emits a DIFFERENT session_id in its `system:init`
+/// frame (claude generates its own). Without this param the parser
+/// would emit session-ready events carrying claude's id — which
+/// diverges from the key we use in the session HashMap and breaks
+/// subsequent send_claude_message calls. Pass ours in so init-
+/// triggered session-ready events reuse it.
+pub async fn parse_stream(
+    stdout: ChildStdout,
+    app: AppHandle,
+    internal_session_id: String,
+) {
     // Debug log is APPENDED across parse_stream invocations (one per
     // spawn) so we don't lose history of prior sessions when the app
     // re-spawns after a crash. Truncated only when the whole app
@@ -140,7 +152,14 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
                 // Log FULL line (not preview) so we can diagnose
                 // malformed inputs / errors post-mortem.
                 dbg_log(&format!("LINE: {line}"));
-                handle_line(&line, &app, &mut msg_id_gen, &mut current_msg_id, &mut tool_name_map);
+                handle_line(
+                    &line,
+                    &app,
+                    &mut msg_id_gen,
+                    &mut current_msg_id,
+                    &mut tool_name_map,
+                    &internal_session_id,
+                );
             }
             Ok(None) => {
                 dbg_log("EOF — process exited or pipe closed");
@@ -168,6 +187,7 @@ fn handle_line(
     msg_id_gen: &mut MessageIdGen,
     current_msg_id: &mut String,
     tool_name_map: &mut std::collections::HashMap<String, String>,
+    internal_session_id: &str,
 ) {
     // First try to determine the type field without full deserialization
     let raw: serde_json::Value = match serde_json::from_str(line) {
@@ -181,7 +201,7 @@ fn handle_line(
     let event_type = raw["type"].as_str().unwrap_or("");
 
     match event_type {
-        "system" => handle_system_event(&raw, app),
+        "system" => handle_system_event(&raw, app, internal_session_id),
         "assistant" => handle_assistant_event(&raw, app, msg_id_gen, current_msg_id, tool_name_map),
         "user" => handle_user_event(&raw, app, tool_name_map),
         "result" => handle_result_event(&raw, app),
@@ -192,7 +212,11 @@ fn handle_line(
     }
 }
 
-fn handle_system_event(raw: &serde_json::Value, app: &AppHandle) {
+fn handle_system_event(
+    raw: &serde_json::Value,
+    app: &AppHandle,
+    internal_session_id: &str,
+) {
     let subtype = raw["subtype"].as_str().unwrap_or("");
     match subtype {
         "hook_started" | "hook_response" => {
@@ -200,11 +224,14 @@ fn handle_system_event(raw: &serde_json::Value, app: &AppHandle) {
             log::debug!("Filtered hook event: {}", subtype);
         }
         "init" => {
+            // Use the session_id we assigned at spawn time, NOT the
+            // claude-generated one in raw["session_id"]. Rust's
+            // ClaudeSessionManager.sessions HashMap is keyed by our
+            // internal uuid; sending a message after the real init
+            // would fail ("Session not found") if the frontend
+            // switched its sessionId to claude's uuid here.
             let payload = SessionReadyPayload {
-                session_id: raw["session_id"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                session_id: internal_session_id.to_string(),
                 tools: raw["tools"]
                     .as_array()
                     .map(|arr| {

@@ -149,10 +149,14 @@ impl ClaudeSessionManager {
             .take()
             .ok_or("Failed to capture Claude stderr")?;
 
-        // Spawn stream parser task (reads stdout → emits Tauri events)
+        // Spawn stream parser task (reads stdout → emits Tauri events).
+        // Pass our internal session_id so claude's own session_id
+        // from system:init doesn't override the one the frontend uses
+        // to address subsequent sendClaudeMessage calls.
         let parser_app = app.clone();
+        let parser_session_id = session_id.clone();
         tokio::spawn(async move {
-            parse_stream(stdout, parser_app).await;
+            parse_stream(stdout, parser_app, parser_session_id).await;
         });
 
         // Emit synthetic session-ready immediately on spawn success.
