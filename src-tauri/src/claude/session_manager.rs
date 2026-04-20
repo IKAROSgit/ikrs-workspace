@@ -239,9 +239,21 @@ impl ClaudeSessionManager {
             .get_mut(session_id)
             .ok_or_else(|| format!("Session {session_id} not found"))?;
 
+        // The Claude CLI --input-format stream-json expects the shape
+        // {"type":"user","message":{"role":"user","content":"..."}}.
+        // The previous shape with `content:[{type,text}]` was the Messages-
+        // API shape, not the CLI stream-json shape — claude silently
+        // rejected it, sat idle, then exited on stdin close. Diagnosed
+        // 2026-04-20 via /tmp/ikrs-stream.log: claude emitted hooks,
+        // received the malformed "hi" on stdin, stayed silent for 55s,
+        // then EOF. Manual CLI reproduction with the correct shape
+        // emits system:init + assistant + result within 2s.
         let msg = serde_json::json!({
             "type": "user",
-            "content": [{ "type": "text", "text": text }]
+            "message": {
+                "role": "user",
+                "content": text,
+            }
         });
         let mut payload = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         payload.push('\n');
