@@ -191,13 +191,24 @@ impl ClaudeSessionManager {
             },
         );
 
-        // Spawn stderr reader (logs to debug, emits claude:stderr)
+        // Spawn stderr reader (logs to debug, emits claude:stderr, AND
+        // appends to /tmp/ikrs-stream.log so stderr survives webview-
+        // devtools being unavailable — 2026-04-20 debug instrumentation).
         let stderr_app = app.clone();
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stderr);
             let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
             while let Ok(Some(line)) = lines.next_line().await {
                 log::debug!("Claude stderr: {}", line);
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/ikrs-stream.log")
+                {
+                    use std::io::Write;
+                    let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
+                    let _ = writeln!(f, "[{ts}] STDERR: {line}");
+                }
                 let _ = stderr_app.emit(
                     "claude:stderr",
                     serde_json::json!({ "line": line }),
@@ -255,6 +266,23 @@ impl ClaudeSessionManager {
                 "content": text,
             }
         });
+        // Debug trace — write send_message events to the same log
+        // file the stream parser uses so we can correlate input /
+        // output in post-mortems. 2026-04-20 instrumentation.
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/ikrs-stream.log")
+        {
+            use std::io::Write;
+            let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
+            let _ = writeln!(
+                f,
+                "[{ts}] SEND session={session_id} text_len={} preview={:?}",
+                text.len(),
+                text.chars().take(80).collect::<String>()
+            );
+        }
         let mut payload = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         payload.push('\n');
 

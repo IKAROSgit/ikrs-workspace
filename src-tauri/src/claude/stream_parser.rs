@@ -120,8 +120,11 @@ fn dbg_log(msg: &str) {
 /// Reads Claude CLI stdout line-by-line and emits typed Tauri events.
 /// Returns when the stream ends (process exited or pipe broken).
 pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
-    let _ = std::fs::remove_file("/tmp/ikrs-stream.log");
-    dbg_log("parse_stream started");
+    // Debug log is APPENDED across parse_stream invocations (one per
+    // spawn) so we don't lose history of prior sessions when the app
+    // re-spawns after a crash. Truncated only when the whole app
+    // restarts via the external `rm -f` on launch.
+    dbg_log("==================== parse_stream started ====================");
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
     let mut msg_id_gen = MessageIdGen::new();
@@ -134,8 +137,9 @@ pub async fn parse_stream(stdout: ChildStdout, app: AppHandle) {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let preview: String = line.chars().take(200).collect();
-                dbg_log(&format!("LINE: {preview}"));
+                // Log FULL line (not preview) so we can diagnose
+                // malformed inputs / errors post-mortem.
+                dbg_log(&format!("LINE: {line}"));
                 handle_line(&line, &app, &mut msg_id_gen, &mut current_msg_id, &mut tool_name_map);
             }
             Ok(None) => {
