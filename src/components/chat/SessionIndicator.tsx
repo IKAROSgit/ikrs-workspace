@@ -43,7 +43,13 @@ export function SessionIndicator({
         </div>
         {model && <span className="hidden sm:inline">{model}</span>}
         {costUsd > 0 && (
-          <span className="ml-auto">${costUsd.toFixed(4)}</span>
+          <span
+            className="ml-auto"
+            title="Usage meter — Claude Code reports what this session would have cost on the pay-per-token API. Your Max subscription absorbs this up to your monthly allowance; it's not a separate bill."
+          >
+            ${costUsd.toFixed(4)}
+            <span className="text-[10px] opacity-70 ml-0.5">/Max</span>
+          </span>
         )}
       </div>
       {showDetails && (

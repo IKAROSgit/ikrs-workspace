@@ -81,6 +81,7 @@ pub fn run() {
             commands::oauth::start_firebase_identity_flow,
             commands::oauth::cancel_firebase_identity_flow,
             commands::oauth::clear_token_cache,
+            commands::gmail_sync::list_gmail_inbox,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,

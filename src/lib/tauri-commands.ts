@@ -76,6 +76,43 @@ export async function clearTokenCache(): Promise<void> {
   return invoke("clear_token_cache");
 }
 
+// Gmail inbox sync (2026-04-20). Direct Gmail REST API call from
+// Rust, using the per-engagement access token already in keychain
+// cache. Bypasses the MCP client bridge that was never built out —
+// Claude's in-chat gmail tool use still runs through the MCP server;
+// this is only for the Inbox view's read-only sync.
+//
+// Returns a discriminated union matching Rust's `GmailInboxResult`
+// so the caller can branch on specific failure modes rather than
+// stringly-matching error text. See `useGmail.ts` for consumer.
+export interface GmailMessage {
+  id: string;
+  thread_id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  date: string;
+  is_read: boolean;
+}
+
+export type GmailInboxResult =
+  | { status: "ok"; messages: GmailMessage[] }
+  | { status: "not_connected" }
+  | { status: "scope_missing" }
+  | { status: "rate_limited" }
+  | { status: "network" }
+  | { status: "other"; code: number | null };
+
+export async function listGmailInbox(
+  engagementId: string,
+  maxResults?: number,
+): Promise<GmailInboxResult> {
+  return invoke("list_gmail_inbox", {
+    engagementId,
+    maxResults: maxResults ?? null,
+  });
+}
+
 // Vault lifecycle
 export async function createVault(clientSlug: string): Promise<string> {
   return invoke("create_vault", { clientSlug });

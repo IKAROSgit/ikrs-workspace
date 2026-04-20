@@ -79,8 +79,11 @@ export function SessionDetailsModal({ onClose }: SessionDetailsModalProps) {
         <span className="text-muted-foreground">Duration</span>
         <span className="font-medium">{formatDuration(sessionStartedAt)}</span>
 
-        <span className="text-muted-foreground">Cost</span>
-        <span className="font-medium">${totalCostUsd.toFixed(4)}</span>
+        <span className="text-muted-foreground">Usage</span>
+        <span className="font-medium" title="Max-subscription usage meter — Claude Code reports what this session would have cost on the pay-per-token API. Your Max subscription absorbs it up to your monthly allowance; this is not a separate bill.">
+          ${totalCostUsd.toFixed(4)}
+          <span className="text-muted-foreground ml-1 text-[10px]">/ Max</span>
+        </span>
 
         <span className="text-muted-foreground">Session ID</span>
         <span className="font-mono text-[10px] truncate">{sessionId ?? "—"}</span>

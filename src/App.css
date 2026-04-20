@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+/* Markdown rendering for assistant messages (Cowork-like UX).
+   Enables `prose` utilities used in MessageBubble. Added 2026-04-20. */
+@plugin "@tailwindcss/typography";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
