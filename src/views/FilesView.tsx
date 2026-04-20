@@ -82,25 +82,69 @@ export default function FilesView() {
       <ScrollArea className="flex-1">
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <p className="text-sm">No files found.</p>
+            <p className="text-sm">
+              {loading ? "Loading files..." : "No files found."}
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-border">
             {files.map((file) => (
-              <div
+              <a
                 key={file.id}
+                href={file.webViewLink ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex items-center gap-3 px-4 py-2 hover:bg-accent/50 cursor-pointer"
+                title={file.name}
               >
                 <FileIcon mimeType={file.mimeType} />
                 <span className="flex-1 text-sm truncate">{file.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {file.modifiedTime}
+                {file.size && (
+                  <span className="text-xs text-muted-foreground">
+                    {formatSize(file.size)}
+                  </span>
+                )}
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  {formatDriveDate(file.modifiedTime)}
                 </span>
-              </div>
+              </a>
             ))}
           </div>
         )}
       </ScrollArea>
     </div>
   );
+}
+
+/** Drive `modifiedTime` is RFC 3339 — format compactly. */
+function formatDriveDate(raw: string): string {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+}
+
+function formatSize(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

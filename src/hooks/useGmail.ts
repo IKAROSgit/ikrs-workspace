@@ -21,11 +21,6 @@ interface GmailMessageFromRust {
   is_read: boolean;
 }
 
-// Discriminated union matching the Rust `GmailInboxResult` enum
-// (commands::gmail_sync). Tauri serde v1 serializes with the
-// `tag = "status"` attribute, variant name is snake_case of the
-// Rust variant. See gmail_sync.rs module docstring for why this
-// shape rather than stringly-matched Err.
 type GmailInboxResult =
   | { status: "ok"; messages: GmailMessageFromRust[] }
   | { status: "not_connected" }
@@ -47,10 +42,6 @@ interface UseGmailResult {
   emails: Email[];
   loading: boolean;
   error: string | null;
-  /** Legacy boolean kept so existing callers don't break. `true`
-   *  when connectionState is "connected" or still loading the
-   *  first refresh (optimistic — prevents the Connect-Google flash
-   *  on mount). See Codex must-fix #1 (2026-04-20). */
   isConnected: boolean;
   connectionState: GmailConnectionState;
   refresh: () => void;
@@ -59,23 +50,15 @@ interface UseGmailResult {
 const REFRESH_DEBOUNCE_MS = 1000;
 
 /**
- * Gmail inbox sync.
+ * Gmail inbox sync — direct Gmail REST from Rust.
  *
- * 2026-04-20 rewrite: previously this hook was a stub returning
- * `[]` — Inbox view showed "No emails" forever. Now it calls the
- * Rust `list_gmail_inbox` command, which hits Gmail REST directly
- * using the per-engagement access token from keychain.
- *
- * Codex-addressed must-fixes this revision:
- *  #1 optimistic isConnected: starts in "loading" so InboxView
- *     doesn't flash "Connect Google in Settings" on every mount
- *     while the first fetch is in flight.
- *  #2 structured error taxonomy: branch on discriminated union
- *     from Rust, not substring match on error messages.
- *  #4 refresh debounce: rapid clicks collapse into one call.
- *  #5 NotConnected vs empty-inbox: Rust returns distinct variants,
- *     and the hook shows the Connect-Google state only for
- *     NotConnected, never for a legitimately empty inbox.
+ * Rapid-engagement-switch safety (Codex 2026-04-20 must-fix): every
+ * async refresh captures the engagementId at call start. When the
+ * response lands, we discard it if the active engagement has
+ * changed in the meantime — otherwise engagement A's emails would
+ * momentarily overwrite the engagement-B view the user switched
+ * to. The debounce also resets on engagement change so switching
+ * doesn't eat the new engagement's legitimate first refresh.
  */
 export function useGmail(): UseGmailResult {
   const [emails, setEmails] = useState<Email[]>([]);
@@ -87,9 +70,19 @@ export function useGmail(): UseGmailResult {
 
   const lastRefreshAt = useRef<number>(0);
   const inFlight = useRef<boolean>(false);
+  const lastEngagement = useRef<string | null>(null);
+
+  // Reset debounce when the engagement changes.
+  useEffect(() => {
+    if (lastEngagement.current !== activeEngagementId) {
+      lastRefreshAt.current = 0;
+      lastEngagement.current = activeEngagementId ?? null;
+    }
+  }, [activeEngagementId]);
 
   const refresh = useCallback(async () => {
     if (!activeEngagementId) return;
+    const callEngagement = activeEngagementId;
     const now = Date.now();
     if (inFlight.current) return;
     if (now - lastRefreshAt.current < REFRESH_DEBOUNCE_MS) return;
@@ -100,9 +93,16 @@ export function useGmail(): UseGmailResult {
 
     try {
       const result = await invoke<GmailInboxResult>("list_gmail_inbox", {
-        engagementId: activeEngagementId,
+        engagementId: callEngagement,
         maxResults: 30,
       });
+      // Discard the result if the user switched engagements
+      // between call start and response arrival.
+      const currentEngagement =
+        useEngagementStore.getState().activeEngagementId;
+      if (currentEngagement !== callEngagement) {
+        return;
+      }
 
       switch (result.status) {
         case "ok": {
@@ -149,8 +149,9 @@ export function useGmail(): UseGmailResult {
           break;
       }
     } catch (e) {
-      // Transport / serialization failure from the Tauri invoke
-      // itself. Not Gmail-specific.
+      const currentEngagement =
+        useEngagementStore.getState().activeEngagementId;
+      if (currentEngagement !== callEngagement) return;
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setConnectionState("error");
@@ -164,13 +165,6 @@ export function useGmail(): UseGmailResult {
     refresh();
   }, [refresh]);
 
-  // Legacy boolean kept for InboxView's existing branch:
-  //   false → show Connect-Google empty state
-  //   true  → render the inbox UI (possibly with a red error banner
-  //           if `error` is set from a transient rate_limit/network)
-  // Only `not_connected` means "please connect Google"; everything
-  // else (including "loading" and transient errors) should keep the
-  // inbox chrome visible so the user doesn't lose orientation.
   const isConnected = connectionState !== "not_connected";
 
   return { emails, loading, error, isConnected, connectionState, refresh };

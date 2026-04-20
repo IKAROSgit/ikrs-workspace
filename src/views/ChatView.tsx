@@ -16,10 +16,16 @@ import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession }
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+// Google OAuth scopes. 2026-04-20: drive.file → drive.readonly so
+// the Files view surfaces the consultant's existing Drive content
+// (drive.file only exposes files the app itself created, which would
+// make the view look empty on day 0). Still read-only; Claude's
+// in-chat tools that need write access use the drive MCP which has
+// its own auth.
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive.readonly",
 ];
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";

@@ -8,6 +8,20 @@ fn vault_base() -> PathBuf {
         .join("vaults")
 }
 
+/// Resolve the vault path for a client slug, with basic slug
+/// validation (no path separators, no traversal, no empty). Shared
+/// by vault / notes_sync / future direct-filesystem commands.
+pub fn vault_path_for_slug(slug: &str) -> Result<PathBuf, String> {
+    if slug.is_empty()
+        || slug.contains('/')
+        || slug.contains('\\')
+        || slug.contains("..")
+    {
+        return Err(format!("invalid client slug: {slug:?}"));
+    }
+    Ok(vault_base().join(slug))
+}
+
 #[tauri::command]
 pub async fn create_vault(client_slug: String) -> Result<String, String> {
     let vault_path = vault_base().join(&client_slug);

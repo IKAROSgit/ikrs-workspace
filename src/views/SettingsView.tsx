@@ -22,10 +22,13 @@ import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import type { SkillUpdateParams } from "@/types/skills";
 
+// Keep in sync with ChatView.tsx GOOGLE_SCOPES. 2026-04-20:
+// drive.file bumped to drive.readonly so the Files view surfaces
+// consultants' existing Drive content.
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive.readonly",
 ];
 
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
