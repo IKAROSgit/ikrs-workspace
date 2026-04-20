@@ -12,6 +12,7 @@ import type {
   ErrorPayload,
   SessionEndPayload,
   McpAuthErrorPayload,
+  WriteVerificationPayload,
 } from "@/types/claude";
 
 /**
@@ -170,6 +171,17 @@ function registerListeners(): void {
         event.payload.error_hint
       );
     })
+  );
+
+  // Ground-truth record of every Write/Edit/NotebookEdit Claude did
+  // this session. Backend has already stat'd the file; this just
+  // adds the result to the store for UI display. Lies (verified=false
+  // but claude_claimed_success=true) are ALSO surfaced via
+  // claude:error so the user can't miss them.
+  register(() =>
+    listen<WriteVerificationPayload>("claude:write-verified", (event) => {
+      store().recordWriteVerification(event.payload);
+    }),
   );
 }
 

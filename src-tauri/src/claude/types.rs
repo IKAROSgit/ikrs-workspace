@@ -170,4 +170,30 @@ pub struct McpAuthErrorPayload {
     pub error_hint: String,
 }
 
+/// Ground-truth result of stat'ing a file path that Claude just
+/// claimed to have Written / Edited / NotebookEdited. Emitted as
+/// `claude:write-verified` regardless of what Claude's tool_result
+/// or assistant text says about success.
+///
+/// The UI surfaces `verified=false` as a visible non-dismissing
+/// error banner — so the user sees "Claude claimed to save X but
+/// the file does not exist on disk" even if the assistant text is
+/// chirpy about success. Prevents the data-loss lie class of bug.
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteVerificationPayload {
+    pub tool_id: String,
+    pub tool_name: String,
+    pub path: String,
+    /// True if the file exists on disk AND (for Write) has non-zero
+    /// content, OR (for Edit / NotebookEdit) the mtime is recent.
+    pub verified: bool,
+    pub size_bytes: Option<u64>,
+    /// If verified=false, a concrete reason: "file does not exist",
+    /// "file is empty", "stat failed: ...".
+    pub reason: Option<String>,
+    /// Did Claude also claim success in its tool_result?
+    /// If claim != verified, we had a lie — frontend highlights loudly.
+    pub claude_claimed_success: bool,
+}
+
 pub const MIN_CLAUDE_VERSION: &str = "2.1.0";

@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import type { ChatMessage, ToolActivity, ClaudeSessionStatus } from "@/types/claude";
+import type {
+  ChatMessage,
+  ToolActivity,
+  ClaudeSessionStatus,
+  WriteVerificationEntry,
+  WriteVerificationPayload,
+} from "@/types/claude";
 
 interface ClaudeState {
   sessionId: string | null;
@@ -14,12 +20,18 @@ interface ClaudeState {
   sessionStartedAt: number | null;
   engagementId: string | null;
   historyCache: Record<string, ChatMessage[]>;
+  /** Ground-truth record of every file the backend stat'd after
+   *  Claude claimed a Write/Edit/NotebookEdit. Rendered by the Chat
+   *  view's SavedFiles panel so the user sees what actually landed
+   *  on disk, not just what Claude said about it. */
+  writeVerifications: WriteVerificationEntry[];
 
   setSessionReady: (sessionId: string, tools: string[], model: string) => void;
   addUserMessage: (text: string) => void;
   addTextDelta: (messageId: string, text: string) => void;
   startTool: (toolId: string, toolName: string, friendlyLabel: string, toolInput?: string) => void;
   endTool: (toolId: string, success: boolean, summary: string, resultContent?: string) => void;
+  recordWriteVerification: (payload: WriteVerificationPayload) => void;
   completeTurn: (costUsd: number, durationMs: number) => void;
   setError: (message: string) => void;
   setAuthError: (server: string, hint: string) => void;
@@ -43,6 +55,7 @@ const initialState = {
   sessionStartedAt: null as number | null,
   engagementId: null as string | null,
   historyCache: {} as Record<string, ChatMessage[]>,
+  writeVerifications: [] as WriteVerificationEntry[],
 };
 
 export const useClaudeStore = create<ClaudeState>()((set) => ({
@@ -129,6 +142,14 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
             }
           : t
       ),
+    })),
+
+  recordWriteVerification: (payload) =>
+    set((state) => ({
+      writeVerifications: [
+        ...state.writeVerifications,
+        { ...payload, timestamp: new Date() },
+      ],
     })),
 
   completeTurn: (costUsd, _durationMs) =>

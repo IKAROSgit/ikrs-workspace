@@ -115,21 +115,29 @@ pub fn scaffold_engagement_skills(params: &ScaffoldParams) -> Result<String, Str
     //    tool use that isn't pre-approved. Our chat UI rendered
     //    those prompts as transient toasts that disappeared before
     //    the consultant could click — making in-session file saves
-    //    fail silently and forcing the consultant to drop to a
-    //    terminal to hand-edit the settings file. Unacceptable UX
-    //    for a per-client workspace product.
+    //    fail silently AND (worse) the subsequent assistant text
+    //    cheerfully reported "Meeting notes saved to …" even though
+    //    no file was ever written. A real consultant lost their
+    //    triaged tracker + transcript to that lie before we caught
+    //    it. Unacceptable.
     //
-    //    Scope rationale:
-    //      - Write / Edit / NotebookEdit / Read / Glob / Grep run
-    //        scoped to the engagement_path by Claude Code's cwd and
-    //        the orchestrator CLAUDE.md conventions, so auto-allow
-    //        is safe within this vault.
-    //      - Bash stays DISALLOWED (enforced by session_manager's
-    //        `--disallowed-tools Bash` flag; not even listed here).
-    //      - MCP tools (mcp__gmail__*, mcp__drive__*, mcp__obsidian__*)
-    //        aren't pre-approved here — their auth was already granted
-    //        at Connect-Google time, and the in-chat "tool use" visible
-    //        card is a useful audit trail for consultants.
+    //    Security scope (Codex 2026-04-20 HOLD on prior loose allow):
+    //    every tool is path-anchored to the engagement's own vault
+    //    directory via Claude Code's `Tool(path-pattern)` permission
+    //    syntax. A prompt injection that tells Claude to write to
+    //    `~/.ssh/authorized_keys` or read `~/.aws/credentials` will
+    //    fall through the allow list and hit the default-prompt
+    //    gate — which is still better than nothing, and the
+    //    write-verification layer in stream_parser catches any
+    //    misreported success regardless.
+    //
+    //    Deny list: `Read(/etc/**)`, `Read(~/.ssh/**)`,
+    //    `Read(~/.aws/**)`, `Read(~/.config/**)` explicitly listed
+    //    so even a permission-prompt-dismissed approval can't leak
+    //    those paths. Claude Code's deny takes precedence over allow.
+    //
+    //    Bash: not on the allow list AND enforced at the CLI flag
+    //    level via `--disallowed-tools Bash` in session_manager.
     //
     //    Idempotent: existing settings preserved on re-scaffold.
     let claude_dir = base.join(".claude");
@@ -137,20 +145,7 @@ pub fn scaffold_engagement_skills(params: &ScaffoldParams) -> Result<String, Str
     if !settings_path.exists() {
         fs::create_dir_all(&claude_dir)
             .map_err(|e| format!("Failed to create .claude/ dir: {e}"))?;
-        let settings = serde_json::json!({
-            "permissions": {
-                "allow": [
-                    "Write",
-                    "Edit",
-                    "NotebookEdit",
-                    "Read",
-                    "Glob",
-                    "Grep"
-                ]
-            }
-        });
-        let json = serde_json::to_string_pretty(&settings)
-            .map_err(|e| format!("Failed to serialize settings.local.json: {e}"))?;
+        let json = build_vault_scoped_settings(&base)?;
         fs::write(&settings_path, json)
             .map_err(|e| format!("Failed to write settings.local.json: {e}"))?;
     }
@@ -158,11 +153,45 @@ pub fn scaffold_engagement_skills(params: &ScaffoldParams) -> Result<String, Str
     Ok(params.engagement_path.clone())
 }
 
+/// Build a vault-scoped Claude Code permissions JSON. Every
+/// file-touching tool is pattern-anchored to the engagement path.
+fn build_vault_scoped_settings(vault_path: &std::path::Path) -> Result<String, String> {
+    let vault_glob = format!("{}/**", vault_path.to_string_lossy());
+    let settings = serde_json::json!({
+        "permissions": {
+            "allow": [
+                format!("Write({vault_glob})"),
+                format!("Edit({vault_glob})"),
+                format!("NotebookEdit({vault_glob})"),
+                format!("Read({vault_glob})"),
+                "Glob",
+                "Grep",
+            ],
+            // Belt-and-braces: even if prompt-injection tricks the
+            // user into approving a prompt that falls through allow,
+            // these paths stay denied. Deny > allow in Claude Code.
+            "deny": [
+                "Read(/etc/**)",
+                "Read(/private/etc/**)",
+                "Read(~/.ssh/**)",
+                "Read(~/.aws/**)",
+                "Read(~/.config/gcloud/**)",
+                "Read(~/Library/Keychains/**)",
+                "Write(~/.ssh/**)",
+                "Write(~/.bash_profile)",
+                "Write(~/.bashrc)",
+                "Write(~/.zshrc)",
+                "Write(~/.zprofile)",
+                "Write(~/.profile)",
+            ]
+        }
+    });
+    serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("serialize settings: {e}"))
+}
+
 /// Backfill `.claude/settings.local.json` for engagements scaffolded
-/// before 2026-04-20 (when this auto-write was added). Called at
-/// session-spawn time so existing daily-use vaults pick up the
-/// auto-allow permissions without requiring the user to re-scaffold.
-///
+/// before 2026-04-20. Path-scoped — same shape as fresh scaffold.
 /// Idempotent: no-op if the file already exists.
 pub fn backfill_claude_settings(engagement_path: &std::path::Path) -> Result<(), String> {
     let settings_path = engagement_path.join(".claude/settings.local.json");
@@ -172,20 +201,8 @@ pub fn backfill_claude_settings(engagement_path: &std::path::Path) -> Result<(),
     let claude_dir = engagement_path.join(".claude");
     fs::create_dir_all(&claude_dir)
         .map_err(|e| format!("backfill: create .claude: {e}"))?;
-    let settings = serde_json::json!({
-        "permissions": {
-            "allow": [
-                "Write",
-                "Edit",
-                "NotebookEdit",
-                "Read",
-                "Glob",
-                "Grep"
-            ]
-        }
-    });
-    let json = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("backfill: serialize: {e}"))?;
+    let json = build_vault_scoped_settings(engagement_path)
+        .map_err(|e| format!("backfill: {e}"))?;
     fs::write(&settings_path, json)
         .map_err(|e| format!("backfill: write: {e}"))?;
     Ok(())
@@ -301,15 +318,12 @@ mod tests {
     }
 
     #[test]
-    fn test_scaffold_writes_claude_settings_with_safe_allow_list() {
-        // Regression for the 2026-04-20 permissions UX fix. Every
-        // freshly scaffolded engagement MUST ship with a
-        // `.claude/settings.local.json` that pre-allows Write / Edit
-        // / NotebookEdit / Read / Glob / Grep — otherwise Claude's
-        // inline permission prompts flash and auto-dismiss in the
-        // chat UI, forcing consultants to edit config files in a
-        // terminal. Also verify Bash is NOT on the allow list (it's
-        // disallowed at the CLI-flag level and must never leak in).
+    fn test_scaffold_writes_path_scoped_permissions() {
+        // Regression for 2026-04-20 Codex HOLD: the allow list
+        // MUST be path-scoped to the engagement vault so a prompt-
+        // injection attack via email/invite content can't make
+        // Claude write ~/.ssh/authorized_keys or read ~/.aws/
+        // credentials. Pattern syntax: `Write(/abs/path/**)`.
         let tmp = make_vault_dir();
         let engagement_path = format!("{tmp}/settings-test");
         fs::create_dir_all(&engagement_path).unwrap();
@@ -339,23 +353,51 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
 
-        for required in ["Write", "Edit", "NotebookEdit", "Read", "Glob", "Grep"] {
+        // Every file-touching tool must be path-anchored to the vault.
+        let vault_canon = std::fs::canonicalize(&engagement_path).unwrap();
+        let vault_str = vault_canon.to_string_lossy().to_string();
+        for tool in ["Write", "Edit", "NotebookEdit", "Read"] {
+            let needle = format!("{tool}({vault_str}/**)");
             assert!(
-                allow.contains(&required.to_string()),
-                "settings.local.json missing '{required}' in allow list — consultants will see auto-dismissing permission prompts"
+                allow.iter().any(|s| s == &needle),
+                "allow list missing path-scoped entry {needle}; got {allow:?}"
+            );
+            // And must NOT contain the unscoped form.
+            assert!(
+                !allow.iter().any(|s| s == tool),
+                "allow list has UNSCOPED '{tool}' entry — prompt-injection escape risk"
             );
         }
         assert!(
-            !allow.iter().any(|s| s == "Bash"),
-            "settings.local.json must NEVER auto-allow Bash"
+            !allow.iter().any(|s| s == "Bash" || s.starts_with("Bash(")),
+            "allow list must NEVER contain Bash"
         );
+
+        // Deny list must block known-sensitive host paths.
+        let deny = parsed["permissions"]["deny"]
+            .as_array()
+            .expect("deny list missing")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        for required_deny in [
+            "Read(~/.ssh/**)",
+            "Read(~/.aws/**)",
+            "Read(~/Library/Keychains/**)",
+            "Write(~/.ssh/**)",
+            "Write(~/.zshrc)",
+        ] {
+            assert!(
+                deny.contains(&required_deny.to_string()),
+                "deny list missing {required_deny}"
+            );
+        }
 
         fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
-    fn test_backfill_claude_settings_creates_when_missing() {
-        // Backfill path for engagements scaffolded before 2026-04-20.
+    fn test_backfill_claude_settings_creates_path_scoped() {
         let tmp = make_vault_dir();
         let engagement_path = std::path::Path::new(&tmp).join("legacy-engagement");
         fs::create_dir_all(&engagement_path).unwrap();
@@ -368,8 +410,15 @@ mod tests {
             engagement_path.join(".claude/settings.local.json"),
         )
         .unwrap();
-        assert!(content.contains("\"Write\""));
-        assert!(!content.contains("\"Bash\""));
+        assert!(
+            content.contains("Write("),
+            "backfill must emit path-scoped Write(...)"
+        );
+        assert!(
+            !content.contains("\"Write\""),
+            "backfill must NOT emit unscoped Write"
+        );
+        assert!(content.contains("~/.ssh/**"), "deny list missing ssh");
 
         fs::remove_dir_all(&tmp).ok();
     }

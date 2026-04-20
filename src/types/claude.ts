@@ -83,3 +83,22 @@ export interface McpAuthErrorPayload {
   server_name: string;
   error_hint: string;
 }
+
+// Emitted after every Write / Edit / NotebookEdit tool-result. The
+// Rust side stats the target file and reports ground-truth state
+// alongside what Claude claimed. `verified=false` when
+// `claude_claimed_success=true` = the lie-class-of-bug that caused
+// Moe's transcript + triaged tracker to vanish 2026-04-20.
+export interface WriteVerificationPayload {
+  tool_id: string;
+  tool_name: "Write" | "Edit" | "NotebookEdit" | string;
+  path: string;
+  verified: boolean;
+  size_bytes: number | null;
+  reason: string | null;
+  claude_claimed_success: boolean;
+}
+
+export interface WriteVerificationEntry extends WriteVerificationPayload {
+  timestamp: Date;
+}
