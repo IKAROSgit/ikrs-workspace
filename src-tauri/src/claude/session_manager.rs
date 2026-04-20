@@ -155,6 +155,42 @@ impl ClaudeSessionManager {
             parse_stream(stdout, parser_app).await;
         });
 
+        // Emit synthetic session-ready immediately on spawn success.
+        //
+        // Diagnosed 2026-04-20 via direct Mac SSH after hours of
+        // chasing frontend race theories: `claude --print
+        // --input-format stream-json` does NOT emit the `system:init`
+        // frame (from which we derive `claude:session-ready`) until
+        // it receives the FIRST user message on stdin. Until then
+        // claude sits idle after running SessionStart hooks, which
+        // means:
+        //   1. UI shows "Connecting..." waiting for session-ready
+        //   2. User can't type the first message because the input
+        //      is disabled while status is "connecting"
+        //   3. Deadlock.
+        //
+        // The fix: synthesize a session-ready event from what we
+        // already know at spawn time — session_id, an empty tools
+        // list, and the model placeholder "initializing". The UI
+        // unwedges and lets the consultant type. When the real
+        // `system:init` arrives (triggered by that first user
+        // message), `setSessionReady` overwrites with the actual
+        // tools array + model name. The MCP store gets populated
+        // from the real init.
+        //
+        // Cost: tools/MCP badges show empty for the first few
+        // seconds after a fresh spawn, until the first send. Small
+        // price for unwedging daily use.
+        let _ = app.emit(
+            "claude:session-ready",
+            SessionReadyPayload {
+                session_id: session_id.clone(),
+                tools: Vec::new(),
+                model: "initializing".to_string(),
+                cwd: engagement_path.clone(),
+            },
+        );
+
         // Spawn stderr reader (logs to debug, emits claude:stderr)
         let stderr_app = app.clone();
         tokio::spawn(async move {
