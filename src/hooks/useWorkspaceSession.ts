@@ -77,7 +77,32 @@ export function useWorkspaceSession() {
 
       // Check for resume session
       const resumeId = await getResumeSessionId(engagement.id);
-      await spawnClaudeSession(engagement.id, engagement.vault.path, resumeId ?? undefined, client?.slug, engagement.settings.strictMcp);
+      const spawnedSessionId = await spawnClaudeSession(
+        engagement.id,
+        engagement.vault.path,
+        resumeId ?? undefined,
+        client?.slug,
+        engagement.settings.strictMcp,
+      );
+
+      // Flip to connected using the session_id returned from spawn.
+      // Diagnosed 2026-04-20: previously we waited for the
+      // `claude:session-ready` event, which fires from the Rust
+      // stream parser on `system:init`. But claude --print --input-
+      // format stream-json does not emit init until the first user
+      // message arrives on stdin — deadlock (user can't type until
+      // connected; never connects without typing). The Rust side now
+      // emits a synthetic session-ready on spawn, but we also
+      // short-circuit here using the returned session_id as the
+      // authoritative "session exists" signal. Tools + real model
+      // populate from the real system:init when the user sends.
+      if (useClaudeStore.getState().status !== "connected") {
+        useClaudeStore.getState().setSessionReady(
+          spawnedSessionId,
+          [],
+          "initializing",
+        );
+      }
 
       // Frontend-driven resume timeout (5s)
       if (resumeId) {
@@ -90,7 +115,20 @@ export function useWorkspaceSession() {
           }
           useClaudeStore.getState().reset();
           useClaudeStore.setState({ status: "connecting" });
-          await spawnClaudeSession(engagement.id, engagement.vault.path, undefined, client?.slug, engagement.settings.strictMcp);
+          const retrySessionId = await spawnClaudeSession(
+            engagement.id,
+            engagement.vault.path,
+            undefined,
+            client?.slug,
+            engagement.settings.strictMcp,
+          );
+          if (useClaudeStore.getState().status !== "connected") {
+            useClaudeStore.getState().setSessionReady(
+              retrySessionId,
+              [],
+              "initializing",
+            );
+          }
         }
       }
     } catch (e) {
@@ -139,13 +177,23 @@ export function useWorkspaceSession() {
       );
       if (engagement) {
         useClaudeStore.setState({ status: "connecting" });
-        await spawnClaudeSession(
+        const switchSessionId = await spawnClaudeSession(
           newEngagementId,
           engagement.vault.path,
           resumeId ?? undefined,
           switchClient?.slug,
           engagement.settings.strictMcp,
         );
+        // See comment in connect() above re: claude-print doesn't
+        // emit system:init without user input → deadlock. Short-
+        // circuit on the returned session_id.
+        if (useClaudeStore.getState().status !== "connected") {
+          useClaudeStore.getState().setSessionReady(
+            switchSessionId,
+            [],
+            "initializing",
+          );
+        }
 
         // Frontend-driven resume timeout (5s)
         if (resumeId) {
@@ -155,7 +203,20 @@ export function useWorkspaceSession() {
             if (sid) await killClaudeSession(sid);
             useClaudeStore.getState().reset();
             useClaudeStore.setState({ status: "connecting" });
-            await spawnClaudeSession(newEngagementId, engagement.vault.path, undefined, switchClient?.slug, engagement.settings.strictMcp);
+            const retryId = await spawnClaudeSession(
+              newEngagementId,
+              engagement.vault.path,
+              undefined,
+              switchClient?.slug,
+              engagement.settings.strictMcp,
+            );
+            if (useClaudeStore.getState().status !== "connected") {
+              useClaudeStore.getState().setSessionReady(
+                retryId,
+                [],
+                "initializing",
+              );
+            }
           }
         }
       }
