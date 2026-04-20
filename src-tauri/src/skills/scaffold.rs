@@ -106,7 +106,89 @@ pub fn scaffold_engagement_skills(params: &ScaffoldParams) -> Result<String, Str
             .map_err(|e| format!("Failed to write .skill-version: {e}"))?;
     }
 
+    // 4. Write .claude/settings.local.json pre-approving safe,
+    //    vault-scoped tools so consultants never see permission-prompt
+    //    flashes that auto-dismiss in the UI.
+    //
+    //    Background (2026-04-20): the Claude Code CLI permission
+    //    system prompts inline in the stream for every Write/Edit
+    //    tool use that isn't pre-approved. Our chat UI rendered
+    //    those prompts as transient toasts that disappeared before
+    //    the consultant could click — making in-session file saves
+    //    fail silently and forcing the consultant to drop to a
+    //    terminal to hand-edit the settings file. Unacceptable UX
+    //    for a per-client workspace product.
+    //
+    //    Scope rationale:
+    //      - Write / Edit / NotebookEdit / Read / Glob / Grep run
+    //        scoped to the engagement_path by Claude Code's cwd and
+    //        the orchestrator CLAUDE.md conventions, so auto-allow
+    //        is safe within this vault.
+    //      - Bash stays DISALLOWED (enforced by session_manager's
+    //        `--disallowed-tools Bash` flag; not even listed here).
+    //      - MCP tools (mcp__gmail__*, mcp__drive__*, mcp__obsidian__*)
+    //        aren't pre-approved here — their auth was already granted
+    //        at Connect-Google time, and the in-chat "tool use" visible
+    //        card is a useful audit trail for consultants.
+    //
+    //    Idempotent: existing settings preserved on re-scaffold.
+    let claude_dir = base.join(".claude");
+    let settings_path = claude_dir.join("settings.local.json");
+    if !settings_path.exists() {
+        fs::create_dir_all(&claude_dir)
+            .map_err(|e| format!("Failed to create .claude/ dir: {e}"))?;
+        let settings = serde_json::json!({
+            "permissions": {
+                "allow": [
+                    "Write",
+                    "Edit",
+                    "NotebookEdit",
+                    "Read",
+                    "Glob",
+                    "Grep"
+                ]
+            }
+        });
+        let json = serde_json::to_string_pretty(&settings)
+            .map_err(|e| format!("Failed to serialize settings.local.json: {e}"))?;
+        fs::write(&settings_path, json)
+            .map_err(|e| format!("Failed to write settings.local.json: {e}"))?;
+    }
+
     Ok(params.engagement_path.clone())
+}
+
+/// Backfill `.claude/settings.local.json` for engagements scaffolded
+/// before 2026-04-20 (when this auto-write was added). Called at
+/// session-spawn time so existing daily-use vaults pick up the
+/// auto-allow permissions without requiring the user to re-scaffold.
+///
+/// Idempotent: no-op if the file already exists.
+pub fn backfill_claude_settings(engagement_path: &std::path::Path) -> Result<(), String> {
+    let settings_path = engagement_path.join(".claude/settings.local.json");
+    if settings_path.exists() {
+        return Ok(());
+    }
+    let claude_dir = engagement_path.join(".claude");
+    fs::create_dir_all(&claude_dir)
+        .map_err(|e| format!("backfill: create .claude: {e}"))?;
+    let settings = serde_json::json!({
+        "permissions": {
+            "allow": [
+                "Write",
+                "Edit",
+                "NotebookEdit",
+                "Read",
+                "Glob",
+                "Grep"
+            ]
+        }
+    });
+    let json = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("backfill: serialize: {e}"))?;
+    fs::write(&settings_path, json)
+        .map_err(|e| format!("backfill: write: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -215,6 +297,106 @@ mod tests {
         assert_eq!(content, "# Custom content", "Scaffold overwrote existing file!");
 
         // Cleanup
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_scaffold_writes_claude_settings_with_safe_allow_list() {
+        // Regression for the 2026-04-20 permissions UX fix. Every
+        // freshly scaffolded engagement MUST ship with a
+        // `.claude/settings.local.json` that pre-allows Write / Edit
+        // / NotebookEdit / Read / Glob / Grep — otherwise Claude's
+        // inline permission prompts flash and auto-dismiss in the
+        // chat UI, forcing consultants to edit config files in a
+        // terminal. Also verify Bash is NOT on the allow list (it's
+        // disallowed at the CLI-flag level and must never leak in).
+        let tmp = make_vault_dir();
+        let engagement_path = format!("{tmp}/settings-test");
+        fs::create_dir_all(&engagement_path).unwrap();
+
+        let params = ScaffoldParams {
+            engagement_path: engagement_path.clone(),
+            client_name: "Perm Corp".to_string(),
+            client_slug: "perm-corp".to_string(),
+            engagement_title: "E".to_string(),
+            engagement_description: "E".to_string(),
+            consultant_name: "U".to_string(),
+            consultant_email: "u@u.com".to_string(),
+            timezone: "UTC".to_string(),
+        };
+        scaffold_engagement_skills(&params).unwrap();
+
+        let settings_path = std::path::Path::new(&engagement_path)
+            .join(".claude/settings.local.json");
+        assert!(settings_path.exists(), ".claude/settings.local.json missing");
+
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let allow = parsed["permissions"]["allow"]
+            .as_array()
+            .expect("allow list missing")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+
+        for required in ["Write", "Edit", "NotebookEdit", "Read", "Glob", "Grep"] {
+            assert!(
+                allow.contains(&required.to_string()),
+                "settings.local.json missing '{required}' in allow list — consultants will see auto-dismissing permission prompts"
+            );
+        }
+        assert!(
+            !allow.iter().any(|s| s == "Bash"),
+            "settings.local.json must NEVER auto-allow Bash"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_backfill_claude_settings_creates_when_missing() {
+        // Backfill path for engagements scaffolded before 2026-04-20.
+        let tmp = make_vault_dir();
+        let engagement_path = std::path::Path::new(&tmp).join("legacy-engagement");
+        fs::create_dir_all(&engagement_path).unwrap();
+
+        assert!(!engagement_path.join(".claude/settings.local.json").exists());
+        backfill_claude_settings(&engagement_path).unwrap();
+        assert!(engagement_path.join(".claude/settings.local.json").exists());
+
+        let content = fs::read_to_string(
+            engagement_path.join(".claude/settings.local.json"),
+        )
+        .unwrap();
+        assert!(content.contains("\"Write\""));
+        assert!(!content.contains("\"Bash\""));
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_backfill_is_idempotent_and_preserves_custom_settings() {
+        // Backfill must NEVER overwrite a user-customised settings
+        // file. If a consultant has added project-specific allows
+        // (or, more importantly, denies), we keep theirs as-is.
+        let tmp = make_vault_dir();
+        let engagement_path = std::path::Path::new(&tmp).join("custom-settings");
+        fs::create_dir_all(engagement_path.join(".claude")).unwrap();
+        let custom = r#"{"permissions":{"allow":["Read"],"deny":["Write"]}}"#;
+        fs::write(
+            engagement_path.join(".claude/settings.local.json"),
+            custom,
+        )
+        .unwrap();
+
+        backfill_claude_settings(&engagement_path).unwrap();
+
+        let after = fs::read_to_string(
+            engagement_path.join(".claude/settings.local.json"),
+        )
+        .unwrap();
+        assert_eq!(after, custom, "backfill clobbered user's custom settings");
+
         fs::remove_dir_all(&tmp).ok();
     }
 

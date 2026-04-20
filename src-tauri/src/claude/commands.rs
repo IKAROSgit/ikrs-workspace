@@ -57,6 +57,14 @@ pub async fn spawn_claude_session(
             }
         }
 
+        // 2a. Backfill .claude/settings.local.json for pre-2026-04-20
+        //     vaults so Claude's Write/Edit/NotebookEdit tool use
+        //     doesn't trigger permission prompts that auto-dismiss in
+        //     the UI. Safe to run every spawn — idempotent.
+        if let Err(e) = crate::skills::scaffold::backfill_claude_settings(&vault_path) {
+            log::warn!("Claude settings backfill failed for {slug}: {e}");
+        }
+
         // 3. Generate MCP config (with resolved npx path for sandbox compatibility)
         //    S14 fix: pass the actual token value, not a placeholder.
         //    Gmail-MCP (2026-04-18) consumes the full OAuth credential
