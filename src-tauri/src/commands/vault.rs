@@ -160,9 +160,10 @@ fn engagement_claude_md(client_slug: &str) -> String {
          - `00-inbox/` — catch-all for loose notes. Sort later.\n\
          - `01-meetings/YYYY-MM-DD-<slug>.md` — meeting notes. Use\n\
            the template in `_templates/meeting-note.md`.\n\
-         - `02-tasks/` — managed by the app's Kanban. Do NOT create\n\
-           task files here directly; the app's \"Create task\" action\n\
-           is authoritative.\n\
+         - `02-tasks/<id>.md` — the app's Kanban is backed by files\n\
+           in this folder. See \"Creating tasks\" below for the\n\
+           required frontmatter. Do NOT manually edit a task file's\n\
+           `id` field — you'll break the Kanban sync.\n\
          - `03-deliverables/` — client-facing outputs (proposals,\n\
            docs, reports).\n\
          - `04-reference/` — background research, client material,\n\
@@ -181,6 +182,62 @@ fn engagement_claude_md(client_slug: &str) -> String {
            `principles.md` (how the consultant works), `lessons.md`\n\
            (gotchas), `relationships.md` (who's who on the client\n\
            side), `context.md` (current engagement state).\n\n\
+         ## Creating tasks that show up in the Kanban\n\n\
+         The app's Kanban view is wired to `02-tasks/`. When you\n\
+         create a markdown file there with the right YAML frontmatter,\n\
+         a filesystem watcher picks it up and the task appears on\n\
+         the Kanban within a second or two. This is the ONLY way to\n\
+         create app-level tasks from Claude — your internal TodoWrite\n\
+         tool is separate (it only updates your own in-session task\n\
+         panel, not the Kanban).\n\n\
+         ### Required format\n\n\
+         File path: `02-tasks/<id>.md` where `<id>` is a short unique\n\
+         slug (e.g. `t-2026-04-21-procure-av-stack`).\n\n\
+         ```markdown\n\
+         ---\n\
+         id: t-2026-04-21-procure-av-stack\n\
+         title: Procure AV stack for Activate deck\n\
+         status: in_progress\n\
+         priority: p1\n\
+         tags: [vendor, urgent]\n\
+         due: 2026-04-28\n\
+         client_visible: true\n\
+         description: Confirm quotes from 2 AV vendors by Friday.\n\
+         assignee: consultant\n\
+         ---\n\n\
+         Optional long-form notes go below the frontmatter. They\n\
+         show up in the task drawer's notes timeline.\n\
+         ```\n\n\
+         ### Field reference\n\n\
+         - `id` — unique, stable, lowercase-hyphenated. Claude should\n\
+           NEVER reuse an id across tasks. Pick a descriptive slug,\n\
+           not a UUID — it's easier for the consultant to read.\n\
+         - `title` — short, imperative, 60 chars or under.\n\
+         - `status` — one of: `backlog`, `in_progress`,\n\
+           `awaiting_client`, `blocked`, `in_review`, `done`.\n\
+         - `priority` — `p1` (urgent/blocker) · `p2` (default) · `p3`\n\
+           (nice to have).\n\
+         - `tags` — optional list of short strings.\n\
+         - `due` — optional `YYYY-MM-DD`. Omit entirely if no date.\n\
+         - `client_visible` — optional. `true` means the task is\n\
+           visible to the client on their portal; `false` means\n\
+           consultant-only. Defaults to the engagement setting.\n\
+         - `description` — optional, short. Long context goes in\n\
+           the body below the frontmatter, not here.\n\
+         - `assignee` — `consultant` (default) · `claude` · `client`.\n\n\
+         ### Bulk task imports\n\n\
+         When the consultant asks you to \"import these tasks into\n\
+         the Kanban\", write one `02-tasks/<id>.md` file per task.\n\
+         Do not batch them into a single file. Use sequential ids\n\
+         if they came from a numbered list (e.g. `t-p1-001` through\n\
+         `t-p1-018`). Write them serially — not in parallel — to\n\
+         avoid swamping the filesystem watcher.\n\n\
+         ### Updating a task\n\n\
+         If the task already exists in `02-tasks/` (same `id`), read\n\
+         it first, edit the frontmatter or body, and write it back\n\
+         with the same `id`. The app merges changes into the Kanban.\n\
+         NEVER delete the file to \"recreate\" a task — that erases\n\
+         the task from the Kanban. Editing in place is the right move.\n\n\
          ## Naming\n\n\
          - `YYYY-MM-DD` uses local calendar date, zero-padded.\n\
          - `<slug>` is lowercase-hyphenated, 2–6 words.\n\
@@ -655,6 +712,23 @@ mod tests {
         let claude_md = fs::read_to_string(vault.join("CLAUDE.md")).unwrap();
         assert!(claude_md.contains("acme-corp"));
         assert!(claude_md.contains("daily-notes/"));
+        // Regression guard: CLAUDE.md must teach Claude the Kanban
+        // task-creation workflow (frontmatter format + path). This
+        // was missing in the Phase-C version and caused a real
+        // user-facing bug where Claude used its internal TodoWrite
+        // instead of writing files to 02-tasks/.
+        assert!(
+            claude_md.contains("02-tasks/<id>.md"),
+            "CLAUDE.md should document the 02-tasks path"
+        );
+        assert!(
+            claude_md.contains("id:") && claude_md.contains("title:") && claude_md.contains("status:"),
+            "CLAUDE.md should show the required frontmatter fields"
+        );
+        assert!(
+            claude_md.contains("in_progress"),
+            "CLAUDE.md should list valid status values"
+        );
     }
 
     #[test]
