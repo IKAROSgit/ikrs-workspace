@@ -240,6 +240,22 @@ export async function killClaudeSession(sessionId: string): Promise<void> {
   return invoke("kill_claude_session", { sessionId });
 }
 
+/**
+ * Fire the evolving-memory distiller for a just-ended session.
+ *
+ * Non-blocking: the Rust side detaches the actual Claude CLI call
+ * into a tokio task, so this resolves in milliseconds regardless
+ * of how long the distillation takes. Returns `true` if the call
+ * was accepted, `false` if the transcript was too short to be
+ * worth distilling (backend-side guard).
+ */
+export async function distillSessionMemory(
+  clientSlug: string,
+  transcript: string,
+): Promise<boolean> {
+  return invoke("distill_session_memory", { clientSlug, transcript });
+}
+
 export async function getResumeSessionId(
   engagementId: string,
 ): Promise<string | null> {

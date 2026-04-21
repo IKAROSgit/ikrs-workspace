@@ -1,5 +1,6 @@
 mod claude;
 mod commands;
+mod memory;
 mod oauth;
 mod skills;
 
@@ -99,6 +100,8 @@ pub fn run() {
             commands::vault::delete_vault,
             commands::vault::list_recent_vault_notes,
             commands::vault::ensure_engagement_scaffold,
+            commands::vault::read_engagement_memory,
+            commands::memory_cmd::distill_session_memory,
             // Claude M2 — embedded subprocess
             claude::auth::claude_version_check,
             claude::auth::claude_auth_status,

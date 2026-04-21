@@ -75,6 +75,13 @@ interface RecentNote {
   size_bytes: number;
 }
 
+interface EngagementMemory {
+  principles: string;
+  lessons: string;
+  relationships: string;
+  context: string;
+}
+
 /**
  * Compose the briefing markdown. Awaits all data sources in parallel
  * with per-source timeouts so a hanging API call can't stall spawn.
@@ -83,16 +90,17 @@ export async function composeSessionBriefing(
   engagementId: string,
   clientSlug: string | undefined,
 ): Promise<string> {
-  const [calendar, gmail, notes] = await Promise.all([
+  const [calendar, gmail, notes, memory] = await Promise.all([
     withTimeout(fetchCalendar(engagementId), 4000, "calendar"),
     withTimeout(fetchGmailPriority(engagementId), 4000, "gmail"),
     withTimeout(fetchRecentNotes(clientSlug), 2000, "notes"),
+    withTimeout(fetchMemory(clientSlug), 2000, "memory"),
   ]);
 
   // Tasks come from the already-subscribed zustand store — no await.
   const tasks = selectActiveTasks(engagementId);
 
-  return renderBriefing({ calendar, gmail, tasks, notes });
+  return renderBriefing({ calendar, gmail, tasks, notes, memory });
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -198,6 +206,21 @@ async function fetchRecentNotes(
   }
 }
 
+async function fetchMemory(
+  clientSlug: string | undefined,
+): Promise<MemorySection> {
+  if (!clientSlug) return { kind: "ok", memory: null };
+  try {
+    const memory = await invoke<EngagementMemory>(
+      "read_engagement_memory",
+      { clientSlug },
+    );
+    return { kind: "ok", memory };
+  } catch (e) {
+    return { kind: "skipped", reason: `memory read failed: ${describeError(e)}` };
+  }
+}
+
 // ────────────────────────────────────────────────────────────────
 
 function selectActiveTasks(engagementId: string): Task[] {
@@ -233,11 +256,16 @@ type NotesSection =
   | { kind: "ok"; notes: RecentNote[] }
   | { kind: "skipped"; reason: string };
 
+type MemorySection =
+  | { kind: "ok"; memory: EngagementMemory | null }
+  | { kind: "skipped"; reason: string };
+
 function renderBriefing(p: {
   calendar: CalendarSection;
   gmail: GmailSection;
   tasks: Task[];
   notes: NotesSection;
+  memory: MemorySection;
 }): string {
   const now = new Date();
   const dateLabel = now.toLocaleDateString(undefined, {
@@ -343,6 +371,52 @@ function renderBriefing(p: {
     parts.push(`_Skipped — ${p.notes.reason}._`);
   }
   parts.push("");
+
+  // Evolving memory from prior sessions (Phase 4B). Rendered only
+  // when any of the four files has real content; totally-empty memory
+  // is skipped so a day-zero engagement isn't padded with empty
+  // headers. The distiller (session-end) grows these files over time.
+  if (p.memory.kind === "ok" && p.memory.memory) {
+    const m = p.memory.memory;
+    const hasAny =
+      m.principles.trim().length > 0 ||
+      m.lessons.trim().length > 0 ||
+      m.relationships.trim().length > 0 ||
+      m.context.trim().length > 0;
+    if (hasAny) {
+      parts.push("## Carryover from prior sessions");
+      parts.push(
+        "_The following is your accumulated knowledge of this engagement — " +
+          "trust it, but flag to the consultant if something looks stale._",
+      );
+      parts.push("");
+      if (m.context.trim()) {
+        parts.push("### Current context");
+        parts.push(m.context.trim());
+        parts.push("");
+      }
+      if (m.principles.trim()) {
+        parts.push("### How this consultant works (principles)");
+        parts.push(m.principles.trim());
+        parts.push("");
+      }
+      if (m.relationships.trim()) {
+        parts.push("### Relationships");
+        parts.push(m.relationships.trim());
+        parts.push("");
+      }
+      if (m.lessons.trim()) {
+        parts.push("### Lessons learned");
+        parts.push(m.lessons.trim());
+        parts.push("");
+      }
+    }
+  } else if (p.memory.kind === "skipped") {
+    // Silent skip — memory being unavailable shouldn't produce UI noise.
+    // Log for debugging.
+    // eslint-disable-next-line no-console
+    console.debug(`[briefing] memory skipped: ${p.memory.reason}`);
+  }
 
   parts.push("---");
   parts.push("");

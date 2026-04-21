@@ -249,6 +249,65 @@ pub async fn ensure_engagement_scaffold(
     Ok(vault.to_string_lossy().to_string())
 }
 
+/// Snapshot of the four evolving-memory files for an engagement.
+/// Empty strings for missing files — Phase 4B's read path treats
+/// missing and empty the same (just don't render the section).
+#[derive(Debug, Serialize, Default)]
+pub struct EngagementMemory {
+    pub principles: String,
+    pub lessons: String,
+    pub relationships: String,
+    pub context: String,
+}
+
+/// Read the four memory files for an engagement's vault. Called at
+/// session boot from the briefing composer so Claude opens with
+/// carryover context from prior sessions.
+///
+/// Design (Phase 4B, 2026-04-21):
+///   - Missing `_memory/` folder → empty snapshot. Not an error.
+///   - Each file is soft-capped at 32KB on read to keep the briefing
+///     bounded; if a file is larger, we take the TAIL (most recent
+///     content assumed to be at the bottom of append-only files).
+///   - Never fails — any read error for any file is logged and the
+///     corresponding field returns empty. The session must boot even
+///     if `_memory/` is corrupted.
+#[tauri::command]
+pub async fn read_engagement_memory(
+    client_slug: String,
+) -> Result<EngagementMemory, String> {
+    let vault = vault_path_for_slug(&client_slug)?;
+    let mem_dir = vault.join("_memory");
+    if !mem_dir.exists() {
+        return Ok(EngagementMemory::default());
+    }
+
+    fn read_capped(path: &std::path::Path) -> String {
+        const CAP: usize = 32 * 1024;
+        match fs::read_to_string(path) {
+            Ok(s) if s.len() <= CAP => s,
+            Ok(s) => {
+                // Take the last CAP bytes on a char boundary to avoid
+                // splitting a multi-byte UTF-8 sequence.
+                let start = s.len() - CAP;
+                let mut adj = start;
+                while adj < s.len() && !s.is_char_boundary(adj) {
+                    adj += 1;
+                }
+                format!("…(earlier entries truncated)…\n{}", &s[adj..])
+            }
+            Err(_) => String::new(),
+        }
+    }
+
+    Ok(EngagementMemory {
+        principles: read_capped(&mem_dir.join("principles.md")),
+        lessons: read_capped(&mem_dir.join("lessons.md")),
+        relationships: read_capped(&mem_dir.join("relationships.md")),
+        context: read_capped(&mem_dir.join("context.md")),
+    })
+}
+
 #[tauri::command]
 pub async fn archive_vault(client_slug: String) -> Result<String, String> {
     let vault_path = vault_base().join(&client_slug);

@@ -8,8 +8,10 @@ import {
   getResumeSessionId,
   claudeVersionCheck,
   claudeAuthStatus,
+  distillSessionMemory,
 } from "@/lib/tauri-commands";
 import { composeSessionBriefing } from "@/lib/briefing";
+import type { ChatMessage } from "@/types/claude";
 
 /**
  * Polls claudeStore.status via subscribe() with a timeout.
@@ -89,6 +91,53 @@ async function injectSessionBriefing(
         useClaudeStore.setState({ status: "connected" });
       }
     }
+  }
+}
+
+/**
+ * Flatten the in-store chat transcript into a simple markdown
+ * document the distiller can review. Excludes streaming partials
+ * (isStreaming=true) and empty messages. The distiller does its own
+ * interpretation — we don't need to pre-digest.
+ */
+function transcriptFromMessages(messages: ChatMessage[]): string {
+  const lines: string[] = [];
+  for (const m of messages) {
+    if (m.isStreaming) continue;
+    const text = (m.text ?? "").trim();
+    if (!text) continue;
+    const who = m.role === "user" ? "consultant" : "claude";
+    const ts = m.timestamp instanceof Date
+      ? m.timestamp.toISOString()
+      : new Date(m.timestamp).toISOString();
+    lines.push(`### ${who} · ${ts}\n\n${text}\n`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Fire the session-end distiller for the engagement we're leaving.
+ * Awaited briefly (ms) because the Rust side detaches the actual
+ * Claude CLI call into a tokio task and returns immediately — the
+ * await here just confirms the request was accepted.
+ *
+ * Silent on any failure: distillation is a "nice to have" and must
+ * never block a session switch / kill.
+ */
+async function fireSessionEndDistiller(
+  clientSlug: string | undefined,
+  messages: ChatMessage[],
+): Promise<void> {
+  if (!clientSlug) return;
+  const transcript = transcriptFromMessages(messages);
+  // Backend also guards on length, but we can short-circuit the IPC
+  // round-trip when there's obviously nothing worth distilling.
+  if (transcript.trim().length < 200) return;
+  try {
+    await distillSessionMemory(clientSlug, transcript);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[distiller] request failed (non-fatal)", e);
   }
 }
 
@@ -223,14 +272,33 @@ export function useWorkspaceSession() {
     setSwitching(true);
 
     try {
-      // 1. Kill current Claude session
+      // 1. Fire evolving-memory distiller for the engagement we're
+      //    leaving. Must happen BEFORE killing Claude so the Rust
+      //    side can still resolve the session context — the distiller
+      //    call itself detaches a background task, so we're not
+      //    blocked here. Also BEFORE saveAndClearHistory so the
+      //    transcript is still in the store.
+      const currentEngId = useEngagementStore.getState().activeEngagementId;
+      if (currentEngId) {
+        const currentClient = useEngagementStore.getState().clients.find((c) => {
+          const eng = useEngagementStore
+            .getState()
+            .engagements.find((e) => e.id === currentEngId);
+          return eng ? c.id === eng.clientId : false;
+        });
+        void fireSessionEndDistiller(
+          currentClient?.slug,
+          useClaudeStore.getState().messages,
+        );
+      }
+
+      // 2. Kill current Claude session
       const currentSessionId = useClaudeStore.getState().sessionId;
       if (currentSessionId) {
         await killClaudeSession(currentSessionId);
       }
 
-      // 2. Save current chat history
-      const currentEngId = useEngagementStore.getState().activeEngagementId;
+      // 3. Save current chat history
       if (currentEngId) {
         useClaudeStore.getState().saveAndClearHistory(currentEngId);
       }
