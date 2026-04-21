@@ -224,7 +224,11 @@ fn engagement_claude_md(client_slug: &str) -> String {
            consultant-only. Defaults to the engagement setting.\n\
          - `description` — optional, short. Long context goes in\n\
            the body below the frontmatter, not here.\n\
-         - `assignee` — `consultant` (default) · `claude` · `client`.\n\n\
+         - `assignee` — one of `consultant` · `claude` · `client`.\n\
+           Always set this explicitly. The system-level default\n\
+           (when the field is omitted) is `claude` — which is often\n\
+           WRONG for tasks the consultant will actually work on.\n\
+           If in doubt, set `assignee: consultant`.\n\n\
          ### Bulk task imports\n\n\
          When the consultant asks you to \"import these tasks into\n\
          the Kanban\", write one `02-tasks/<id>.md` file per task.\n\
@@ -728,6 +732,18 @@ mod tests {
         assert!(
             claude_md.contains("in_progress"),
             "CLAUDE.md should list valid status values"
+        );
+        // Codex 2026-04-21: the CLAUDE.md must not claim the default
+        // `assignee` is `consultant` — the actual code default is
+        // `claude`. If this regresses to the wrong doc claim,
+        // Claude-authored tasks will end up assigned to itself.
+        assert!(
+            !claude_md.contains("`consultant` (default)"),
+            "CLAUDE.md must not claim default assignee is consultant"
+        );
+        assert!(
+            claude_md.contains("default") && claude_md.contains("claude"),
+            "CLAUDE.md should document that the omitted-field default is claude"
         );
     }
 
