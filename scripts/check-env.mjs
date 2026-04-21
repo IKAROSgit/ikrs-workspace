@@ -17,8 +17,7 @@
 // during typecheck/build validation and doesn't produce a
 // consumer-installable binary.
 
-import fs from "node:fs";
-import path from "node:path";
+import { loadEnv } from "vite";
 
 const REQUIRED = [
   // Google OAuth — sign-in to the app + per-engagement Google access.
@@ -50,32 +49,24 @@ if (process.env.CI === "true") {
   process.exit(0);
 }
 
-// Load .env.local if present so this script works regardless of
-// how npm/pnpm propagated env. Vite merges .env.local into
-// process.env at build time, but this prebuild runs BEFORE vite, so
-// we parse .env.local ourselves.
-const envLocalPath = path.resolve("./.env.local");
-if (fs.existsSync(envLocalPath)) {
-  const raw = fs.readFileSync(envLocalPath, "utf8");
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed
-      .slice(eq + 1)
-      .trim()
-      .replace(/^["']|["']$/g, "");
-    if (!(key in process.env)) process.env[key] = val;
-  }
-}
+// Use Vite's own loadEnv so we honour the exact file-precedence
+// order vite build does at runtime:
+//   .env  →  .env.[mode]  →  .env.local  →  .env.[mode].local
+// Anything on process.env wins over all of them (standard vite
+// behaviour). Codex 2026-04-22 pre-push P2: a hand-rolled .env.local
+// loader would false-fail valid builds that keep VITE_* in .env
+// (shared defaults) or .env.production (prod-only).
+const mode = process.env.NODE_ENV || "production";
+const loaded = loadEnv(mode, process.cwd(), "VITE_");
+// Merge loaded over process.env fallback (but process.env wins so
+// a caller-exported env always overrides).
+const resolved = { ...loaded, ...process.env };
 
 const missing = [];
 const placeholder = [];
 for (const key of REQUIRED) {
-  const val = process.env[key];
-  if (val === undefined) {
+  const val = resolved[key];
+  if (val === undefined || val === "") {
     missing.push(key);
   } else if (KNOWN_PLACEHOLDERS.has(val.trim())) {
     placeholder.push(key);
