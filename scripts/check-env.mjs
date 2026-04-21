@@ -67,9 +67,21 @@ if (process.env.CI === "true") {
 // Pass `--mode <name>` or env `MODE=<name>` to override for
 // non-default build modes.
 function resolveBuildMode() {
-  const argIdx = process.argv.indexOf("--mode");
-  if (argIdx !== -1 && process.argv[argIdx + 1]) {
-    return process.argv[argIdx + 1];
+  // Support both `--mode <name>` (space-separated) and
+  // `--mode=<name>` (equals-separated) since both are valid
+  // vite CLI forms. Codex 2026-04-22: a missed `--mode=staging`
+  // would silently fall back to production and validate the
+  // wrong env set.
+  for (let i = 0; i < process.argv.length; i++) {
+    const a = process.argv[i];
+    if (a === "--mode") {
+      const next = process.argv[i + 1];
+      if (next) return next;
+    }
+    if (a.startsWith("--mode=")) {
+      const val = a.slice("--mode=".length);
+      if (val) return val;
+    }
   }
   if (process.env.MODE) return process.env.MODE;
   return "production";
