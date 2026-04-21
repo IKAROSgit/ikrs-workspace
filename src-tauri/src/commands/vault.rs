@@ -741,9 +741,23 @@ mod tests {
             !claude_md.contains("`consultant` (default)"),
             "CLAUDE.md must not claim default assignee is consultant"
         );
+        // Scope the disclosure check to the `assignee` bullet itself
+        // so a future edit that (e.g.) drops the disclosure but keeps
+        // the word "default" elsewhere in the doc still fails this
+        // test. Find the "- `assignee` —" bullet and inspect just the
+        // ~300 chars of text that follow.
+        let assignee_idx = claude_md
+            .find("- `assignee` —")
+            .expect("CLAUDE.md must contain an `assignee` bullet");
+        let assignee_section_end = claude_md[assignee_idx..]
+            .find("\n\n")
+            .map(|off| assignee_idx + off)
+            .unwrap_or(claude_md.len().min(assignee_idx + 500));
+        let assignee_section = &claude_md[assignee_idx..assignee_section_end];
         assert!(
-            claude_md.contains("default") && claude_md.contains("claude"),
-            "CLAUDE.md should document that the omitted-field default is claude"
+            assignee_section.contains("default") && assignee_section.contains("claude"),
+            "assignee bullet must disclose that the omitted-field default is claude; \
+             got:\n{assignee_section}"
         );
     }
 
