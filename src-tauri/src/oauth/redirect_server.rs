@@ -1,46 +1,15 @@
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_keyring::KeyringExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 const IKRS_SERVICE: &str = "ikrs-workspace";
 
-/// Try to bind a TcpListener to BOTH IPv6 AND IPv4 loopback on the
-/// same port. Scans from preferred_port up to +15.
-///
-/// Why dual-stack (2026-04-20 fix): modern macOS resolves
-/// `localhost` to `::1` BEFORE `127.0.0.1`. Google's OAuth flow
-/// redirects to `http://localhost:{port}/callback` — the browser
-/// picks `::1` first. If we only bind IPv4, an unrelated process
-/// like `rapportd` (Apple's AirDrop/Handoff daemon) that holds the
-/// IPv6 wildcard `:::{port}` receives the callback instead — the
-/// browser shows the raw URL and the auth code vanishes. Cost of
-/// this fix: we need to accept from both sockets in the caller.
-///
-/// Why a different default port: rapportd reserves the full 49152
-/// range (the first IANA-dynamic port). We now prefer ports in the
-/// 53100-53200 range which we already use internally for gmail-mcp
-/// and haven't seen collisions.
-async fn bind_with_fallback(
-    preferred_port: u16,
-) -> Result<(TcpListener, Option<TcpListener>, u16), String> {
-    for port in preferred_port..=preferred_port + 15 {
-        // Primary: IPv6 loopback (what browsers prefer on macOS).
-        let v6 = TcpListener::bind(format!("[::1]:{port}")).await;
-        let v4 = TcpListener::bind(format!("127.0.0.1:{port}")).await;
-        match (v6, v4) {
-            (Ok(v6), Ok(v4)) => return Ok((v6, Some(v4), port)),
-            (Ok(v6), Err(_)) => return Ok((v6, None, port)),
-            (Err(_), Ok(v4)) => return Ok((v4, None, port)),
-            (Err(_), Err(_)) => continue,
-        }
-    }
-    Err(format!(
-        "Could not bind to any port in range {}-{}",
-        preferred_port,
-        preferred_port + 15
-    ))
-}
+// Dual-stack bind is delegated to `oauth::dual_stack` (shared with
+// `identity_server`). See that module for rationale — in short,
+// macOS resolves `localhost` to `::1` first, so any OAuth callback
+// listener must bind both stacks or the browser's redirect never
+// reaches Rust. The helper ensures a third OAuth-callback listener
+// added in future can't silently regress by forgetting IPv6.
 
 /// Extract the `code` query parameter from an HTTP GET request line.
 fn extract_code(request: &str) -> Option<String> {
@@ -75,27 +44,13 @@ pub async fn start_redirect_server(
     keychain_key: String,
     app: AppHandle,
 ) -> Result<(tokio::task::JoinHandle<Result<(), String>>, u16), String> {
-    let (primary, secondary, actual_port) =
-        bind_with_fallback(preferred_port).await?;
+    let bind =
+        crate::oauth::dual_stack::bind_dual_stack(preferred_port, 15, "engagement-oauth").await?;
+    let actual_port = bind.port;
 
     let handle = tokio::spawn(async move {
-        // Race both bound listeners — whichever socket the browser
-        // hits first (IPv6 ::1 OR IPv4 127.0.0.1) wins. `tokio::select!`
-        // cancels the loser. If we only bound one socket (either
-        // stack unavailable), `secondary` is None and we just accept
-        // on the primary.
-        let (mut stream, _addr) = match secondary {
-            None => primary
-                .accept()
-                .await
-                .map_err(|e| format!("Accept failed: {e}"))?,
-            Some(secondary) => {
-                tokio::select! {
-                    r = primary.accept() => r.map_err(|e| format!("Accept v6 failed: {e}"))?,
-                    r = secondary.accept() => r.map_err(|e| format!("Accept v4 failed: {e}"))?,
-                }
-            }
-        };
+        let (mut stream, _addr) =
+            crate::oauth::dual_stack::accept_from_either(&bind, "engagement-oauth").await?;
 
         let mut buf = vec![0u8; 4096];
         let n = stream

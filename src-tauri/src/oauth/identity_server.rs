@@ -25,7 +25,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 /// Generate a cryptographically-random URL-safe base64 string.
 pub fn generate_random_b64(byte_len: usize) -> String {
@@ -34,46 +33,13 @@ pub fn generate_random_b64(byte_len: usize) -> String {
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 
-/// Dual-stack bind (IPv4 + IPv6) for the Firebase identity callback.
-///
-/// On macOS, `localhost` resolves to `::1` (IPv6) BEFORE `127.0.0.1`.
-/// Google's OAuth redirects the user's browser to
-/// `http://localhost:{port}/oauth/callback` — the browser picks
-/// `::1` first. If this server only binds IPv4, the browser tries
-/// to connect to `[::1]:{port}`, which is either (a) held by an
-/// unrelated process like `rapportd` (Apple's AirDrop/Handoff
-/// daemon) that listens on the IPv6 wildcard, or (b) nothing — in
-/// which case the callback never reaches us. The Rust task waits
-/// on its IPv4 listener until the 310 s timeout, the frontend
-/// shows a "Complete the sign-in…" banner that never resolves, and
-/// the consultant perceives "the button does nothing".
-///
-/// This was the exact root cause of the 2026-04-22 auth regression.
-/// `redirect_server.rs` got the dual-stack fix in commit 78f807a
-/// for the engagement-OAuth flow; this module was missed and still
-/// bound IPv4-only. Now both modules share the same pattern: bind
-/// both stacks when possible, accept from whichever the browser
-/// hits first via `tokio::select!`.
-async fn bind_with_fallback(
-    preferred_port: u16,
-) -> Result<(TcpListener, Option<TcpListener>, u16), String> {
-    for port in preferred_port..=preferred_port + 10 {
-        // Primary: IPv6 loopback (what macOS browsers prefer).
-        let v6 = TcpListener::bind(format!("[::1]:{port}")).await;
-        let v4 = TcpListener::bind(format!("127.0.0.1:{port}")).await;
-        match (v6, v4) {
-            (Ok(v6), Ok(v4)) => return Ok((v6, Some(v4), port)),
-            (Ok(v6), Err(_)) => return Ok((v6, None, port)),
-            (Err(_), Ok(v4)) => return Ok((v4, None, port)),
-            (Err(_), Err(_)) => continue,
-        }
-    }
-    Err(format!(
-        "Could not bind to any port in range {}-{} for Firebase identity callback",
-        preferred_port,
-        preferred_port + 10
-    ))
-}
+// Dual-stack bind is delegated to `oauth::dual_stack` so this module
+// and `redirect_server` share a single code path. Prior to 2026-04-22
+// both modules carried near-duplicate `bind_with_fallback`
+// implementations and drifted — identity_server stayed IPv4-only,
+// causing the macOS `localhost`→`::1` sign-in regression. Sharing
+// the helper makes it impossible for a future OAuth callback
+// listener to regress by forgetting IPv6.
 
 struct CallbackParams {
     code: Option<String>,
@@ -154,7 +120,13 @@ pub async fn start_identity_redirect_server(
         return Err("expected_state must not be empty".to_string());
     }
 
-    let (primary, secondary, actual_port) = bind_with_fallback(preferred_port).await?;
+    let bind = crate::oauth::dual_stack::bind_dual_stack(
+        preferred_port,
+        10,
+        "firebase-identity",
+    )
+    .await?;
+    let actual_port = bind.port;
 
     let handle = tokio::spawn(async move {
         let app_for_error = app.clone();
@@ -172,26 +144,11 @@ pub async fn start_identity_redirect_server(
         // if the frontend's 5-minute setTimeout is somehow suspended
         // (tab backgrounded, system sleep). 310 s = frontend 5 min +
         // 10 s grace.
-        //
-        // Accept from whichever stack the browser hits first. When
-        // `secondary` is None, only one stack is bound and we accept
-        // on it alone. Mirrors redirect_server.rs pattern.
-        let accept_future = async {
-            match secondary {
-                None => primary
-                    .accept()
-                    .await
-                    .map_err(|e| format!("Accept failed: {e}")),
-                Some(secondary) => {
-                    tokio::select! {
-                        r = primary.accept() => r.map_err(|e| format!("Accept v6 failed: {e}")),
-                        r = secondary.accept() => r.map_err(|e| format!("Accept v4 failed: {e}")),
-                    }
-                }
-            }
-        };
-        let accept_result =
-            tokio::time::timeout(std::time::Duration::from_secs(310), accept_future).await;
+        let accept_result = tokio::time::timeout(
+            std::time::Duration::from_secs(310),
+            crate::oauth::dual_stack::accept_from_either(&bind, "firebase-identity"),
+        )
+        .await;
         let (mut stream, _addr) = match accept_result {
             Ok(Ok(ok)) => ok,
             Ok(Err(e)) => return fail(e).await,
@@ -373,79 +330,6 @@ mod tests {
         assert_eq!(a.len(), 43);
     }
 
-    /// Regression guard for the 2026-04-22 auth bug: identity_server
-    /// must bind IPv6 (::1) whenever the OS supports it, because
-    /// macOS resolves `localhost` to `::1` first. A future refactor
-    /// that silently drops the IPv6 bind would reproduce the bug.
-    ///
-    /// IPv4-only environments (locked-down CI, IPv6-disabled kernels)
-    /// are detected via a capability probe: we first try to bind
-    /// `::1` on a throwaway port. If that fails, the test is
-    /// skipped with `eprintln!` rather than asserted — Codex
-    /// 2026-04-22 pre-push P2: a hard assert here would produce
-    /// spurious failures on IPv4-only hosts even though
-    /// bind_with_fallback is correctly degrading.
-    #[tokio::test]
-    async fn bind_with_fallback_produces_ipv6_listener_when_available() {
-        // Capability probe — does this host support IPv6 loopback
-        // at all? Port 0 asks the OS for any free port.
-        let ipv6_supported = TcpListener::bind("[::1]:0").await.is_ok();
-        if !ipv6_supported {
-            eprintln!(
-                "bind_with_fallback_produces_ipv6_listener_when_available: \
-                 skipping — host has no IPv6 loopback support"
-            );
-            return;
-        }
-
-        // Pick a high random port unlikely to collide with parallel
-        // test runs or system services. Fallback range spans +10.
-        let pref = 54321_u16;
-        let (primary, secondary, _port) = bind_with_fallback(pref)
-            .await
-            .expect("bind should succeed on a free port");
-
-        // At least one of the two listeners must be IPv6. On this
-        // dual-stack host (confirmed by the probe above), the fix
-        // must deliver an IPv6 bind — otherwise we've regressed
-        // into the 2026-04-22 auth hang.
-        let primary_is_v6 = primary
-            .local_addr()
-            .map(|a| a.is_ipv6())
-            .unwrap_or(false);
-        let secondary_is_v6 = secondary
-            .as_ref()
-            .and_then(|s| s.local_addr().ok())
-            .map(|a| a.is_ipv6())
-            .unwrap_or(false);
-        assert!(
-            primary_is_v6 || secondary_is_v6,
-            "bind_with_fallback must produce at least one IPv6 listener on a dual-stack host"
-        );
-    }
-
-    /// The fallback range is 10 ports wide; if all 11 are taken, we
-    /// return Err rather than hang. This test pre-binds the entire
-    /// range and asserts the Err.
-    #[tokio::test]
-    async fn bind_with_fallback_errors_when_range_exhausted() {
-        let start = 54500_u16;
-        // Hold 11 ports (preferred + 10 fallbacks) on both stacks
-        // so bind_with_fallback can't get any of them.
-        let mut holders = Vec::new();
-        for p in start..=start + 10 {
-            if let Ok(l) = TcpListener::bind(format!("[::1]:{p}")).await {
-                holders.push(l);
-            }
-            if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{p}")).await {
-                holders.push(l);
-            }
-        }
-        let got = bind_with_fallback(start).await;
-        drop(holders);
-        assert!(
-            got.is_err(),
-            "expected bind_with_fallback to Err when range is exhausted"
-        );
-    }
+    // Dual-stack bind tests moved to `oauth::dual_stack::tests` now
+    // that both auth servers delegate into the shared helper.
 }
