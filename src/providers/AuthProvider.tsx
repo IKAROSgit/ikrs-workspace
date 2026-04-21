@@ -30,9 +30,11 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// Dedicated port range for the Firebase identity flow. Does not overlap
-// the engagement-OAuth port (49152) so both flows can coexist.
-const FIREBASE_IDENTITY_PORT = 49153;
+// Dedicated port range for the Firebase identity flow. Does not
+// overlap the engagement-OAuth port (53111) so both flows can
+// coexist. Moved off 49153 (rapportd range) 2026-04-20 — same
+// macOS IPv6-wildcard collision affects Firebase sign-in too.
+const FIREBASE_IDENTITY_PORT = 53131;
 
 // 5-minute cap — Google leaves the consent screen open for the user;
 // the flow auto-aborts after this so the UI doesn't wedge indefinitely.

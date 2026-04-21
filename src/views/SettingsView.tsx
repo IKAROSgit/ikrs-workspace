@@ -33,7 +33,9 @@ const GOOGLE_SCOPES = [
 
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";
-const OAUTH_PORT = 49152;
+// Mirror of ChatView.tsx OAUTH_PORT. See there for rapportd / IPv6
+// collision explanation (2026-04-20).
+const OAUTH_PORT = 53111;
 
 export default function SettingsView() {
   const { consultant, logOut } = useAuth();

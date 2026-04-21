@@ -29,7 +29,11 @@ const GOOGLE_SCOPES = [
 ];
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";
-const OAUTH_PORT = 49152;
+// 2026-04-20: moved off 49152 because macOS's rapportd daemon binds
+// that port on IPv6 wildcard, and modern macOS prefers IPv6 for
+// `localhost` resolution — browser callbacks hit rapportd not us.
+// 53111 is in the IANA private range and we've verified it's clear.
+const OAUTH_PORT = 53111;
 
 export default function ChatView() {
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
