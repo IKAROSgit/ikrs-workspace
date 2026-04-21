@@ -59,18 +59,36 @@ async function injectSessionBriefing(
   engagementId: string,
   clientSlug: string | undefined,
 ): Promise<void> {
+  let flippedToThinking = false;
   try {
     const briefing = await composeSessionBriefing(engagementId, clientSlug);
     if (briefing.trim().length === 0) return;
+    // Only flip to "thinking" if this briefing is for the CURRENT
+    // session. During rapid engagement switches or reconnects, the
+    // session we primed may already have been replaced — we must
+    // never steer another session's UI state.
+    if (useClaudeStore.getState().sessionId !== sessionId) return;
     // Mirror the "thinking" state so the UI shows activity during
     // the first streamed response, matching what the user would see
     // after a normal send. Claude's `assistant` frames will flip
     // status back to "connected" via completeTurn.
     useClaudeStore.setState({ status: "thinking" });
+    flippedToThinking = true;
     await sendClaudeMessage(sessionId, briefing);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn("[briefing] failed, Claude will cold-start", e);
+    // Codex 2026-04-21 pre-push: if we flipped to "thinking" and
+    // the send failed before Claude's stream could flip us back via
+    // completeTurn, the input stays disabled and the user is stuck
+    // until they reconnect. Restore "connected" iff we're still
+    // looking at the session we primed AND still in thinking.
+    if (flippedToThinking) {
+      const s = useClaudeStore.getState();
+      if (s.sessionId === sessionId && s.status === "thinking") {
+        useClaudeStore.setState({ status: "connected" });
+      }
+    }
   }
 }
 

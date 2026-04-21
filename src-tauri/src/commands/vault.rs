@@ -221,18 +221,30 @@ fn walk_markdown(
             continue;
         }
 
-        let meta = entry.metadata()?;
-        if meta.is_dir() {
+        // Use file_type() (not metadata()) so we can detect symlinks
+        // WITHOUT following them. Codex 2026-04-21 pre-push: following
+        // symlinked directories can recurse through a cycle or into a
+        // huge external tree (e.g. an Obsidian vault that symlinks a
+        // shared library into a subfolder), hanging or stack-
+        // overflowing session boot. Skip all symlinks defensively —
+        // real vault content lives under the real vault root.
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
             walk_markdown(root, &path, out)?;
-        } else if meta.is_file()
+        } else if ft.is_file()
             && path
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.eq_ignore_ascii_case("md"))
                 .unwrap_or(false)
         {
-            if let Ok(mtime) = meta.modified() {
-                out.push((path, mtime, meta.len()));
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    out.push((path, mtime, meta.len()));
+                }
             }
         }
     }
@@ -363,5 +375,48 @@ mod tests {
     #[allow(dead_code)]
     fn _use_tmp_vault() {
         let (_, _) = tmp_vault();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_markdown_skips_symlinked_directories() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Real note in root.
+        write_note(root, "a.md", "# real\n");
+
+        // A sibling directory we'll point a symlink at. Put a file
+        // inside it so we can tell whether the walk followed the link.
+        let sibling = tmp.path().parent().unwrap().join("ikrs-walk-sibling");
+        let _ = fs::remove_dir_all(&sibling);
+        fs::create_dir_all(&sibling).unwrap();
+        write_note(&sibling, "leaked.md", "# leaked\n");
+
+        // symlink root/linkdir -> sibling
+        symlink(&sibling, root.join("linkdir")).unwrap();
+
+        let mut out = Vec::new();
+        walk_markdown(root, root, &mut out).unwrap();
+        let names: Vec<String> = out
+            .iter()
+            .map(|(p, _, _)| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        // Real file found.
+        assert!(names.iter().any(|n| n == "a.md"));
+        // Symlink target content NOT reached — symlink skip prevents
+        // traversal into `sibling/`.
+        assert!(!names.iter().any(|n| n.contains("leaked.md")));
+
+        // Cleanup sibling so parallel test runs don't collide.
+        let _ = fs::remove_dir_all(&sibling);
     }
 }
