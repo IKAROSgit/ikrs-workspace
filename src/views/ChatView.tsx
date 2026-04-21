@@ -142,10 +142,35 @@ export default function ChatView() {
     );
   }
 
+  // Session dropped mid-use (webview refresh, CLI crash, stdin EOF,
+  // etc). We have prior messages in the store but no active session
+  // to send the next turn to. Show a prominent reconnect banner
+  // rather than silently showing the disconnected state — users
+  // reported losing the "I can restart this" affordance when the
+  // webview reloads on Cmd+R. 2026-04-21 fix.
+  const sessionDropped =
+    (status === "disconnected" || status === "error") &&
+    messages.length > 0 &&
+    isOnline &&
+    !switching;
+
   return (
     <div className="flex flex-col h-full">
       <OfflineBanner feature="Claude" />
       <SessionIndicator status={status} model={model} costUsd={totalCostUsd} switching={switching} />
+      {sessionDropped && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-sm">
+          <Bot size={14} className="flex-shrink-0" />
+          <span className="flex-1">
+            {status === "error"
+              ? "Claude session stopped. Your chat history is saved — reconnect to continue."
+              : "Claude session disconnected. Reconnect to keep working."}
+          </span>
+          <Button size="sm" onClick={handleConnect}>
+            Reconnect
+          </Button>
+        </div>
+      )}
 
       {/* Body: messages on the left, ground-truth saved-files ledger on the right */}
       <div className="flex-1 flex overflow-hidden">
