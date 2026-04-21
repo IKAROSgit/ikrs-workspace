@@ -43,6 +43,19 @@ pub struct ActiveWatcher {
     watcher: RecommendedWatcher,
     #[allow(dead_code)]
     debounce: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    /// JoinHandle for the detached initial-scan task. When the
+    /// watcher is replaced or stopped, Drop aborts the scan so it
+    /// can't keep emitting `task:vault-change` events for the
+    /// previous engagement after a switch. Codex 2026-04-22.
+    scan_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for ActiveWatcher {
+    fn drop(&mut self) {
+        if let Some(h) = self.scan_handle.take() {
+            h.abort();
+        }
+    }
 }
 
 /// Parsed frontmatter a Claude-written task markdown file carries.
@@ -219,11 +232,15 @@ pub fn start_task_watch(
     // started after files were written (legacy imports, tasks
     // created while the watcher was looking at the wrong path,
     // etc.) would never sync them to Firestore. The scan runs
-    // off-thread so start_task_watch still returns promptly.
+    // off-thread so start_task_watch still returns promptly, and
+    // its JoinHandle lives on ActiveWatcher so replace/stop can
+    // abort a still-running scan (Codex 2026-04-22 P2: otherwise a
+    // long scan for engagement A would keep emitting after the
+    // user switched to engagement B).
     let scan_app = app.clone();
     let scan_tasks_dir = tasks_dir.clone();
     let scan_engagement_id = engagement_id.clone();
-    tokio::spawn(async move {
+    let scan_handle = tokio::spawn(async move {
         emit_initial_scan(&scan_app, &scan_tasks_dir, &scan_engagement_id).await;
     });
 
@@ -232,6 +249,7 @@ pub fn start_task_watch(
         tasks_dir,
         watcher,
         debounce,
+        scan_handle: Some(scan_handle),
     };
     *state.0.lock().unwrap() = Some(active);
     Ok(())
