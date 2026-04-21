@@ -56,7 +56,25 @@ if (process.env.CI === "true") {
 // behaviour). Codex 2026-04-22 pre-push P2: a hand-rolled .env.local
 // loader would false-fail valid builds that keep VITE_* in .env
 // (shared defaults) or .env.production (prod-only).
-const mode = process.env.NODE_ENV || "production";
+//
+// Mode resolution (Codex P2 follow-up): `vite build` defaults to
+// `production` REGARDLESS of `NODE_ENV` unless `--mode` is passed.
+// If we derived mode from NODE_ENV here, a shell with
+// `NODE_ENV=development` would make this script read
+// `.env.development*` while vite build still reads
+// `.env.production*` — the guard validates a different env set
+// than the build actually uses. Match vite's default instead.
+// Pass `--mode <name>` or env `MODE=<name>` to override for
+// non-default build modes.
+function resolveBuildMode() {
+  const argIdx = process.argv.indexOf("--mode");
+  if (argIdx !== -1 && process.argv[argIdx + 1]) {
+    return process.argv[argIdx + 1];
+  }
+  if (process.env.MODE) return process.env.MODE;
+  return "production";
+}
+const mode = resolveBuildMode();
 const loaded = loadEnv(mode, process.cwd(), "VITE_");
 // Merge loaded over process.env fallback (but process.env wins so
 // a caller-exported env always overrides).
