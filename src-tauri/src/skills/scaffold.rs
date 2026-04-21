@@ -153,19 +153,40 @@ pub fn scaffold_engagement_skills(params: &ScaffoldParams) -> Result<String, Str
     Ok(params.engagement_path.clone())
 }
 
-/// Build a vault-scoped Claude Code permissions JSON. Every
-/// file-touching tool is pattern-anchored to the engagement path.
+/// Build a vault-scoped Claude Code permissions JSON.
+///
+/// Dual-form allow list (2026-04-20 pragmatic fix — observed live
+/// that Claude Code v2.1.80's `Tool(absolute/path/**)` pattern
+/// didn't match when written as expected, so Write/Edit still
+/// blocked Moe's in-app session):
+///   - Unscoped `Write` / `Edit` / `NotebookEdit` / `Read` for the
+///     actual runtime gate. The CLI's cwd is the vault path
+///     (session_manager sets it), so relative file operations
+///     naturally stay scoped.
+///   - Path-anchored variants as a secondary entry that newer
+///     Claude Code versions may honour — belt-and-braces. Upstream
+///     pattern parsing improves, we get tighter scoping automatically.
+///
+/// The primary defence against the "prompt-injection tells Claude
+/// to write to ~/.ssh" attack is the `deny` list, which IS
+/// respected by Claude Code today — deny wins over allow. We
+/// enumerate the known-sensitive host paths and rely on `deny`
+/// not on `allow` scoping.
 fn build_vault_scoped_settings(vault_path: &std::path::Path) -> Result<String, String> {
     let vault_glob = format!("{}/**", vault_path.to_string_lossy());
     let settings = serde_json::json!({
         "permissions": {
             "allow": [
+                "Write",
+                "Edit",
+                "NotebookEdit",
+                "Read",
+                "Glob",
+                "Grep",
                 format!("Write({vault_glob})"),
                 format!("Edit({vault_glob})"),
                 format!("NotebookEdit({vault_glob})"),
                 format!("Read({vault_glob})"),
-                "Glob",
-                "Grep",
             ],
             // Belt-and-braces: even if prompt-injection tricks the
             // user into approving a prompt that falls through allow,
@@ -353,19 +374,22 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
 
-        // Every file-touching tool must be path-anchored to the vault.
+        // Both scoped AND unscoped entries must be present
+        // (dual-form, see build_vault_scoped_settings docstring for
+        // why). The deny list is the primary guardrail — it's
+        // respected by Claude Code today in a way `Tool(pattern)`
+        // allow isn't always.
         let vault_canon = std::fs::canonicalize(&engagement_path).unwrap();
         let vault_str = vault_canon.to_string_lossy().to_string();
         for tool in ["Write", "Edit", "NotebookEdit", "Read"] {
-            let needle = format!("{tool}({vault_str}/**)");
+            let scoped = format!("{tool}({vault_str}/**)");
             assert!(
-                allow.iter().any(|s| s == &needle),
-                "allow list missing path-scoped entry {needle}; got {allow:?}"
+                allow.iter().any(|s| s == &scoped),
+                "allow list missing path-scoped entry {scoped}; got {allow:?}"
             );
-            // And must NOT contain the unscoped form.
             assert!(
-                !allow.iter().any(|s| s == tool),
-                "allow list has UNSCOPED '{tool}' entry — prompt-injection escape risk"
+                allow.iter().any(|s| s == tool),
+                "allow list missing unscoped '{tool}' fallback; got {allow:?}"
             );
         }
         assert!(
@@ -415,8 +439,8 @@ mod tests {
             "backfill must emit path-scoped Write(...)"
         );
         assert!(
-            !content.contains("\"Write\""),
-            "backfill must NOT emit unscoped Write"
+            content.contains("\"Write\""),
+            "backfill must also emit unscoped 'Write' fallback (dual-form)"
         );
         assert!(content.contains("~/.ssh/**"), "deny list missing ssh");
 

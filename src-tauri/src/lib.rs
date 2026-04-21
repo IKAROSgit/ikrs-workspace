@@ -53,6 +53,7 @@ pub fn run() {
         .plugin(tauri_plugin_keyring::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::oauth::OAuthState::default())
+        .manage(commands::task_watch::TaskWatchState::default())
         .manage(oauth::token_cache::TokenCache::default())
         .manage(ClaudeSessionManager::new())
         .setup(|app| {
@@ -89,6 +90,8 @@ pub fn run() {
             commands::drive_sync::list_drive_files,
             commands::notes_sync::list_vault_notes,
             commands::notes_sync::read_note_content,
+            commands::task_watch::start_task_watch,
+            commands::task_watch::stop_task_watch,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,

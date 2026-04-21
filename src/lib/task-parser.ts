@@ -6,15 +6,22 @@ const PRIORITY_RE = /`(p[123])`/;
 const TAG_RE = /`(#[a-zA-Z0-9_-]+)`/g;
 const DUE_RE = /`due:(\d{4}-\d{2}-\d{2})`/;
 
+// Mapping between markdown-checkbox syntax and the Kanban status
+// vocabulary. Legacy `todo` folds into `backlog` post-2026-04-21.
+// "awaiting_client", "blocked", "in_review" aren't expressible in
+// plain-markdown checkbox state — those transitions happen in the
+// app UI or via frontmatter in a structured task file.
 function checkboxToStatus(char: string): TaskStatus {
   if (char === "x") return "done";
   if (char === "/") return "in_progress";
-  return "todo";
+  return "backlog";
 }
 
 function statusToCheckbox(status: TaskStatus): string {
   if (status === "done") return "x";
-  if (status === "in_progress") return "/";
+  if (status === "in_progress" || status === "in_review") return "/";
+  // backlog, awaiting_client, blocked all render as an empty checkbox
+  // in the legacy markdown round-trip.
   return " ";
 }
 
@@ -84,8 +91,11 @@ export function renderTasksMd(
   clientName: string
 ): string {
   const sections: Record<TaskStatus, typeof tasks> = {
-    todo: [],
+    backlog: [],
     in_progress: [],
+    awaiting_client: [],
+    blocked: [],
+    in_review: [],
     done: [],
   };
 
@@ -95,14 +105,27 @@ export function renderTasksMd(
 
   const lines: string[] = [`# ${clientName} — Tasks`, ""];
 
-  const sectionOrder: { heading: string; status: TaskStatus }[] = [
-    { heading: "## To Do", status: "todo" },
-    { heading: "## In Progress", status: "in_progress" },
-    { heading: "## Done", status: "done" },
+  // Markdown export folds the 6-column Kanban into the 3 classic
+  // sections ('To Do' / 'In Progress' / 'Done') for compatibility
+  // with the vault's existing Obsidian-style tasks file. Richer
+  // status info lives in the Firestore source of truth.
+  const sectionOrder: { heading: string; statuses: TaskStatus[] }[] = [
+    {
+      heading: "## To Do",
+      statuses: ["backlog", "awaiting_client", "blocked"],
+    },
+    {
+      heading: "## In Progress",
+      statuses: ["in_progress", "in_review"],
+    },
+    {
+      heading: "## Done",
+      statuses: ["done"],
+    },
   ];
 
-  for (const { heading, status } of sectionOrder) {
-    const sectionTasks = sections[status];
+  for (const { heading, statuses } of sectionOrder) {
+    const sectionTasks = statuses.flatMap((s) => sections[s]);
     if (sectionTasks.length === 0) continue;
 
     lines.push(heading, "");
