@@ -65,6 +65,27 @@ pub async fn spawn_claude_session(
             log::warn!("Claude settings backfill failed for {slug}: {e}");
         }
 
+        // 2b. Phase 4C scaffold: ensure the new folders (daily-notes/,
+        //     05-decisions/, 06-briefs/, _memory/) + templates +
+        //     engagement CLAUDE.md + today's daily note exist. Runs
+        //     on every spawn so pre-Phase-4C vaults migrate
+        //     transparently. Idempotent: existing files are left
+        //     alone, only gaps are filled.
+        if let Err(e) = crate::commands::vault::scaffold_vault_idempotent(
+            &vault_path,
+            slug,
+        ) {
+            log::warn!("Vault scaffold failed for {slug}: {e}");
+        }
+        match crate::commands::vault::ensure_today_daily_note(&vault_path) {
+            Ok(Some(created)) => log::info!(
+                "Created today's daily note: {}",
+                created.display(),
+            ),
+            Ok(None) => {}
+            Err(e) => log::warn!("Daily-note ensure failed for {slug}: {e}"),
+        }
+
         // 3. Generate MCP config (with resolved npx path for sandbox compatibility)
         //    S14 fix: pass the actual token value, not a placeholder.
         //    Gmail-MCP (2026-04-18) consumes the full OAuth credential

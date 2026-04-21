@@ -98,6 +98,7 @@ pub fn run() {
             commands::vault::restore_vault,
             commands::vault::delete_vault,
             commands::vault::list_recent_vault_notes,
+            commands::vault::ensure_engagement_scaffold,
             // Claude M2 — embedded subprocess
             claude::auth::claude_version_check,
             claude::auth::claude_auth_status,

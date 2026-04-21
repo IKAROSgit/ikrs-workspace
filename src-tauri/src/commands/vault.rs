@@ -26,11 +26,37 @@ pub fn vault_path_for_slug(slug: &str) -> Result<PathBuf, String> {
 
 #[tauri::command]
 pub async fn create_vault(client_slug: String) -> Result<String, String> {
-    let vault_path = vault_base().join(&client_slug);
+    let vault_path = vault_path_for_slug(&client_slug)?;
     if vault_path.exists() {
+        // Even on existing vaults, run the idempotent scaffolder so
+        // older vaults pick up new folders/templates added in later
+        // releases (Phase 4C daily-notes/, 05-decisions/, etc.).
+        scaffold_vault_idempotent(&vault_path, &client_slug)?;
         return Ok(vault_path.to_string_lossy().to_string());
     }
+    scaffold_vault_idempotent(&vault_path, &client_slug)?;
+    Ok(vault_path.to_string_lossy().to_string())
+}
 
+/// Idempotent vault scaffolder — creates only what's missing,
+/// touches nothing that exists. Safe to call on session spawn so
+/// existing (pre-Phase-4C) engagements pick up the new structure
+/// without a migration step.
+///
+/// Design (M3 Phase 4C, 2026-04-21):
+///   - Additive only. Never renames, never overwrites.
+///   - Folders that already exist from the legacy `create_vault`
+///     list (`00-inbox`, `01-meetings`, `02-tasks`, etc.) are left
+///     alone; new ones (`05-decisions`, `06-briefs`, `daily-notes`,
+///     `_memory`) are created.
+///   - Templates written only when the target file doesn't exist.
+///   - `CLAUDE.md` and `README.md` written only when missing so
+///     consultants who've customised their vault prompt/readme
+///     don't lose the edits.
+pub fn scaffold_vault_idempotent(
+    vault_path: &std::path::Path,
+    client_slug: &str,
+) -> Result<(), String> {
     let dirs_to_create = [
         ".obsidian",
         "00-inbox",
@@ -38,39 +64,189 @@ pub async fn create_vault(client_slug: String) -> Result<String, String> {
         "02-tasks",
         "03-deliverables",
         "04-reference",
+        "05-decisions",
+        "06-briefs",
+        "daily-notes",
+        "_memory",
+        "_memory/archive",
         "_templates",
     ];
-
     for dir in &dirs_to_create {
-        fs::create_dir_all(vault_path.join(dir))
-            .map_err(|e| format!("Failed to create vault dir {dir}: {e}"))?;
+        let full = vault_path.join(dir);
+        if !full.exists() {
+            fs::create_dir_all(&full)
+                .map_err(|e| format!("Failed to create vault dir {dir}: {e}"))?;
+        }
     }
 
-    let templates = [
-        ("_templates/meeting-note.md", "# Meeting: {{title}}\n\n**Date:** {{date}}\n**Attendees:** \n\n## Agenda\n\n## Notes\n\n## Action Items\n"),
-        ("_templates/task-note.md", "# Task: {{title}}\n\n**Status:** \n**Priority:** \n\n## Context\n\n## Progress\n\n## Blockers\n"),
-        ("_templates/daily-note.md", "# {{date}}\n\n## Focus\n\n## Log\n\n## Reflections\n"),
+    // Templates: create only if absent so edits survive.
+    let templates: &[(&str, &str)] = &[
+        (
+            "_templates/meeting-note.md",
+            "---\ntype: meeting\ndate: {{date}}\nattendees: []\n---\n\n# {{title}}\n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n",
+        ),
+        (
+            "_templates/task-note.md",
+            "# Task: {{title}}\n\n**Status:** \n**Priority:** \n\n## Context\n\n## Progress\n\n## Blockers\n",
+        ),
+        (
+            "_templates/daily-note.md",
+            "# {{date}}\n\n## What's on today\n\n## Decisions\n\n## Log\n\n## Tomorrow\n",
+        ),
+        (
+            "_templates/decision-note.md",
+            "---\ntype: decision\ndate: {{date}}\nstatus: active\n---\n\n# {{title}}\n\n## Context\n\n## Options considered\n\n## Decision\n\n## Consequences\n\n## Follow-ups\n",
+        ),
+        (
+            "_templates/brief-note.md",
+            "---\ntype: brief\ndate: {{date}}\n---\n\n# {{title}}\n\n## Ask\n\n## Output\n",
+        ),
     ];
-
-    for (path, content) in &templates {
-        fs::write(vault_path.join(path), content)
-            .map_err(|e| format!("Failed to write {path}: {e}"))?;
+    for (rel, content) in templates {
+        let p = vault_path.join(rel);
+        if !p.exists() {
+            fs::write(&p, content)
+                .map_err(|e| format!("Failed to write {rel}: {e}"))?;
+        }
     }
 
-    let readme = format!(
-        "# {} — Engagement Vault\n\nCreated by IKAROS Workspace.\n",
-        client_slug
-    );
-    fs::write(vault_path.join("README.md"), readme)
-        .map_err(|e| format!("Failed to write README: {e}"))?;
+    // Engagement-level CLAUDE.md — gives Claude conventions so it
+    // saves meetings/decisions/briefs in the right places without
+    // being told per session. Only written if absent — consultant
+    // edits persist.
+    let claude_md_path = vault_path.join("CLAUDE.md");
+    if !claude_md_path.exists() {
+        fs::write(&claude_md_path, engagement_claude_md(client_slug))
+            .map_err(|e| format!("Failed to write CLAUDE.md: {e}"))?;
+    }
 
-    fs::write(
-        vault_path.join(".obsidian/app.json"),
-        r#"{"theme":"obsidian"}"#,
+    let readme_path = vault_path.join("README.md");
+    if !readme_path.exists() {
+        let readme = format!(
+            "# {client_slug} — Engagement Vault\n\n\
+             Created by IKAROS Workspace. Structure:\n\n\
+             - `00-inbox/` — catch-all, sort later\n\
+             - `01-meetings/` — meeting notes (YYYY-MM-DD-slug.md)\n\
+             - `02-tasks/` — task files (managed by the app's Kanban)\n\
+             - `03-deliverables/` — client-facing outputs\n\
+             - `04-reference/` — research, docs, context\n\
+             - `05-decisions/` — strategic / architectural decisions (NNN-slug.md)\n\
+             - `06-briefs/` — quick prompt-to-artifact outputs\n\
+             - `daily-notes/` — auto-created daily log (YYYY-MM-DD.md)\n\
+             - `_memory/` — Claude's evolving memory (read at boot, written at session end)\n\
+             - `_templates/` — note templates\n\n\
+             See `CLAUDE.md` for the conventions Claude follows in this vault.\n"
+        );
+        fs::write(&readme_path, readme)
+            .map_err(|e| format!("Failed to write README: {e}"))?;
+    }
+
+    let obsidian_cfg = vault_path.join(".obsidian/app.json");
+    if !obsidian_cfg.exists() {
+        fs::write(&obsidian_cfg, r#"{"theme":"obsidian"}"#)
+            .map_err(|e| format!("Failed to write obsidian config: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn engagement_claude_md(client_slug: &str) -> String {
+    format!(
+        "# CLAUDE.md — engagement conventions for {client_slug}\n\n\
+         This vault is managed by IKAROS Workspace. Follow these\n\
+         conventions so files land where they belong and the\n\
+         consultant can find them later.\n\n\
+         ## Folder roles\n\n\
+         - `00-inbox/` — catch-all for loose notes. Sort later.\n\
+         - `01-meetings/YYYY-MM-DD-<slug>.md` — meeting notes. Use\n\
+           the template in `_templates/meeting-note.md`.\n\
+         - `02-tasks/` — managed by the app's Kanban. Do NOT create\n\
+           task files here directly; the app's \"Create task\" action\n\
+           is authoritative.\n\
+         - `03-deliverables/` — client-facing outputs (proposals,\n\
+           docs, reports).\n\
+         - `04-reference/` — background research, client material,\n\
+           context docs.\n\
+         - `05-decisions/NNN-<slug>.md` — strategic or architectural\n\
+           decisions. NNN is the next sequential integer\n\
+           (zero-padded to 3 digits). Use the template in\n\
+           `_templates/decision-note.md`.\n\
+         - `06-briefs/YYYY-MM-DD-<slug>.md` — quick prompt-to-artifact\n\
+           outputs: a draft email, a one-pager, a rough pitch.\n\
+         - `daily-notes/YYYY-MM-DD.md` — the consultant's daily log.\n\
+           The app auto-creates today's file at session boot; you\n\
+           can append to it during the day.\n\
+         - `_memory/` — your evolving memory for this engagement.\n\
+           Read at session boot, written at session end. Contains\n\
+           `principles.md` (how the consultant works), `lessons.md`\n\
+           (gotchas), `relationships.md` (who's who on the client\n\
+           side), `context.md` (current engagement state).\n\n\
+         ## Naming\n\n\
+         - `YYYY-MM-DD` uses local calendar date, zero-padded.\n\
+         - `<slug>` is lowercase-hyphenated, 2–6 words.\n\
+         - Sequential NNN is zero-padded to 3 digits (001, 002, …).\n\n\
+         ## When in doubt\n\n\
+         - If a note doesn't fit any folder, put it in `00-inbox/`\n\
+           and note-to-self that it needs sorting.\n\
+         - Prefer appending to today's daily note for quick captures\n\
+           over creating new files.\n\
+         - Never write files to the vault root. Always use a folder.\n\n\
+         ## Session opening\n\n\
+         The app hands you a proactive briefing at session start with\n\
+         today's calendar, priority mail, active tasks, and recent\n\
+         notes. Open with a short, decision-oriented take — not a\n\
+         blank-slate question.\n"
     )
-    .map_err(|e| format!("Failed to write obsidian config: {e}"))?;
+}
 
-    Ok(vault_path.to_string_lossy().to_string())
+/// Ensure today's daily note exists — create from the daily-note
+/// template if missing. Called at session spawn so the briefing's
+/// "recent notes" section finds it.
+///
+/// Safe to call repeatedly: if the file exists, leaves it alone.
+pub fn ensure_today_daily_note(vault_path: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let target = vault_path.join("daily-notes").join(format!("{today}.md"));
+    if target.exists() {
+        return Ok(None);
+    }
+    // Parent folder should exist from scaffold, but be defensive.
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create daily-notes/: {e}"))?;
+        }
+    }
+    let template_path = vault_path.join("_templates/daily-note.md");
+    let template = if template_path.exists() {
+        fs::read_to_string(&template_path)
+            .map_err(|e| format!("read daily-note template: {e}"))?
+    } else {
+        // Fallback template — keeps daily-note creation from failing
+        // if _templates/ was manually deleted.
+        "# {{date}}\n\n## What's on today\n\n## Decisions\n\n## Log\n\n## Tomorrow\n".to_string()
+    };
+    let rendered = template.replace("{{date}}", &today);
+    fs::write(&target, rendered)
+        .map_err(|e| format!("write daily-note: {e}"))?;
+    Ok(Some(target))
+}
+
+/// Tauri command: scaffold + daily-note ensure in one call, driven
+/// from the session-spawn path. Returns the vault path as a string
+/// so the caller can confirm it resolved.
+#[tauri::command]
+pub async fn ensure_engagement_scaffold(
+    client_slug: String,
+) -> Result<String, String> {
+    let vault = vault_path_for_slug(&client_slug)?;
+    if !vault.exists() {
+        fs::create_dir_all(&vault)
+            .map_err(|e| format!("create vault base: {e}"))?;
+    }
+    scaffold_vault_idempotent(&vault, &client_slug)?;
+    let _ = ensure_today_daily_note(&vault)?;
+    Ok(vault.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -375,6 +551,113 @@ mod tests {
     #[allow(dead_code)]
     fn _use_tmp_vault() {
         let (_, _) = tmp_vault();
+    }
+
+    #[test]
+    fn scaffold_creates_all_expected_folders_and_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().to_path_buf();
+        scaffold_vault_idempotent(&vault, "acme-corp").unwrap();
+
+        for dir in [
+            "00-inbox",
+            "01-meetings",
+            "02-tasks",
+            "03-deliverables",
+            "04-reference",
+            "05-decisions",
+            "06-briefs",
+            "daily-notes",
+            "_memory",
+            "_memory/archive",
+            "_templates",
+            ".obsidian",
+        ] {
+            assert!(
+                vault.join(dir).exists(),
+                "expected dir {dir} to exist"
+            );
+        }
+        for file in [
+            "_templates/meeting-note.md",
+            "_templates/task-note.md",
+            "_templates/daily-note.md",
+            "_templates/decision-note.md",
+            "_templates/brief-note.md",
+            "CLAUDE.md",
+            "README.md",
+            ".obsidian/app.json",
+        ] {
+            assert!(
+                vault.join(file).exists(),
+                "expected file {file} to exist"
+            );
+        }
+        let claude_md = fs::read_to_string(vault.join("CLAUDE.md")).unwrap();
+        assert!(claude_md.contains("acme-corp"));
+        assert!(claude_md.contains("daily-notes/"));
+    }
+
+    #[test]
+    fn scaffold_preserves_user_edits_on_reinvoke() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().to_path_buf();
+        scaffold_vault_idempotent(&vault, "acme").unwrap();
+
+        // User edits CLAUDE.md + adds a note template.
+        fs::write(
+            vault.join("CLAUDE.md"),
+            "# My customised conventions\n",
+        )
+        .unwrap();
+        fs::write(
+            vault.join("_templates/meeting-note.md"),
+            "# {{title}} custom\n",
+        )
+        .unwrap();
+
+        // Re-run scaffolder — edits must survive.
+        scaffold_vault_idempotent(&vault, "acme").unwrap();
+
+        let claude_md = fs::read_to_string(vault.join("CLAUDE.md")).unwrap();
+        assert_eq!(claude_md, "# My customised conventions\n");
+
+        let tmpl = fs::read_to_string(vault.join("_templates/meeting-note.md")).unwrap();
+        assert_eq!(tmpl, "# {{title}} custom\n");
+    }
+
+    #[test]
+    fn ensure_today_daily_note_creates_then_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().to_path_buf();
+        scaffold_vault_idempotent(&vault, "acme").unwrap();
+
+        let first = ensure_today_daily_note(&vault).unwrap();
+        assert!(first.is_some());
+        let path = first.unwrap();
+        assert!(path.exists());
+
+        let content = fs::read_to_string(&path).unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert!(content.contains(&today), "daily note should contain today's date");
+
+        // Second call — must not overwrite or re-create.
+        let second = ensure_today_daily_note(&vault).unwrap();
+        assert!(
+            second.is_none(),
+            "second call should return None (already exists)"
+        );
+    }
+
+    #[test]
+    fn ensure_today_daily_note_uses_fallback_when_template_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().to_path_buf();
+        // Minimum setup: just the daily-notes folder, no _templates.
+        fs::create_dir_all(vault.join("daily-notes")).unwrap();
+        let created = ensure_today_daily_note(&vault).unwrap().unwrap();
+        let content = fs::read_to_string(&created).unwrap();
+        assert!(content.contains("What's on today"));
     }
 
     #[cfg(unix)]
