@@ -223,13 +223,25 @@ impl ClaudeSessionManager {
         // Capture child PID before moving into monitor (for registry)
         let child_pid = child.id().unwrap_or(0);
 
-        // Spawn process monitor task (detects crashes)
+        // Spawn process monitor task (detects crashes). Passes the
+        // mcp_config_path so the monitor can unlink it on exit —
+        // the file carries a raw access token and must not outlive
+        // the session (Codex 2026-04-21 E2E finding).
         let monitor_app = app.clone();
         let monitor_session_id = session_id.clone();
         let monitor_engagement_id = engagement_id.clone();
         let monitor_sessions = Arc::clone(&self.sessions);
+        let monitor_mcp_config = mcp_config_path.clone();
         tokio::spawn(async move {
-            monitor_process(child, monitor_session_id, monitor_engagement_id, monitor_sessions, monitor_app).await;
+            monitor_process(
+                child,
+                monitor_session_id,
+                monitor_engagement_id,
+                monitor_sessions,
+                monitor_app,
+                monitor_mcp_config,
+            )
+            .await;
         });
 
         // Store session
@@ -323,12 +335,17 @@ impl ClaudeSessionManager {
 }
 
 /// Monitors a Claude child process and emits events on exit.
+/// Also unlinks the session's `.mcp-config.json` on exit: the
+/// file contains a raw Google access token, so leaving it behind
+/// after the session ends means a zip-up of the engagement folder
+/// can leak the token. Codex 2026-04-21 E2E finding.
 async fn monitor_process(
     mut child: Child,
     session_id: String,
     engagement_id: String,
     sessions: Arc<Mutex<HashMap<String, ClaudeSession>>>,
     app: AppHandle,
+    mcp_config_path: Option<String>,
 ) {
     loop {
         match child.try_wait() {
@@ -349,6 +366,11 @@ async fn monitor_process(
                 // C2 fix: Unregister from file registry on exit
                 if let Ok(app_data_dir) = app.path().app_data_dir() {
                     let _ = crate::claude::registry::unregister_session(&app_data_dir, &engagement_id);
+                }
+                // Codex 2026-04-21 E2E: scrub the MCP config file so
+                // the raw access token doesn't survive the session.
+                if let Some(ref p) = mcp_config_path {
+                    let _ = std::fs::remove_file(p);
                 }
                 let _ = app.emit(
                     event,
@@ -373,6 +395,10 @@ async fn monitor_process(
                 // C2 fix: Unregister from file registry on error
                 if let Ok(app_data_dir) = app.path().app_data_dir() {
                     let _ = crate::claude::registry::unregister_session(&app_data_dir, &engagement_id);
+                }
+                // Scrub MCP config (see success branch for rationale).
+                if let Some(ref p) = mcp_config_path {
+                    let _ = std::fs::remove_file(p);
                 }
                 let _ = app.emit(
                     "claude:session-crashed",

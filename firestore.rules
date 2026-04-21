@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: only authenticated @ikaros.ae staff
+    function isIkarosStaff() {
+      return request.auth != null
+        && request.auth.token.email.matches('.*@ikaros[.]ae');
+    }
+
+    // Tasks — staff only
+    match /tasks/{taskId} {
+      allow read, write: if isIkarosStaff();
+    }
+
+    // Agent status — staff only
+    match /agents/{agentId} {
+      allow read, write: if isIkarosStaff();
+    }
+
+    // Subscriptions — read only for the owning user; writes via server-side admin only
+    match /subscriptions/{docId} {
+      allow read: if request.auth != null
+        && request.auth.token.email == resource.data.email;
+      allow write: if false;
+    }
+
+    // Onboarding — scoped to owning user
+    // create: new document must have email matching the authenticated user
+    // update: existing document must be owned by authenticated user AND
+    //         the email field may not be changed (prevents ownership transfer)
+    // delete: only the owner may delete their own document
+    // read:   only the owner may read (resource.data.email is valid because doc exists)
+    match /onboarding/{docId} {
+      allow read: if request.auth != null
+        && request.auth.token.email == resource.data.email;
+      allow create: if request.auth != null
+        && request.auth.token.email == request.resource.data.email;
+      allow update: if request.auth != null
+        && request.auth.token.email == resource.data.email
+        && request.auth.token.email == request.resource.data.email;
+      allow delete: if request.auth != null
+        && request.auth.token.email == resource.data.email;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // IKAROS Workspace (ikrs-workspace desktop app) collections.
+    //
+    // Scoped permissively-but-by-owner for the M1/M2 single-consultant
+    // phase. M3 multi-consultant isolation will tighten these with
+    // custom claims on the Firebase user. Added 2026-04-17 after Moe
+    // hit the first real blocker: deny-all was blocking his
+    // consultant/engagement/task writes.
+    //
+    // Design notes in
+    // ikrs-workspace/docs/specs/m3-timesheet-automation.md AD-1.
+    // ────────────────────────────────────────────────────────────────
+
+    // Consultant record — each user reads/writes only their own.
+    match /consultants/{consultantId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == consultantId;
+    }
+
+    // Clients — shared taxonomy. Any authenticated consultant can
+    // create + read. Update/delete locked until M3 introduces proper
+    // client-admin roles.
+    match /clients/{clientId} {
+      allow read, create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    // Engagements — owned by consultantId, readable/writable only by
+    // the consultant who created them.
+    match /engagements/{engagementId} {
+      allow read, update, delete: if request.auth != null
+        && resource.data.consultantId == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.consultantId == request.auth.uid;
+    }
+
+    // ikrs-workspace tasks — NAMESPACED (`ikrs_tasks`) to avoid the
+    // `tasks` collection used by Mission Control (isIkarosStaff gated
+    // above). Consultant-scoped via engagement ownership, checked by
+    // looking up the engagement doc. `get()` calls count against rule
+    // evaluation budget but are cheap for this shape.
+    match /ikrs_tasks/{taskId} {
+      function ownsEngagement(engagementId) {
+        return request.auth != null
+          && get(/databases/$(database)/documents/engagements/$(engagementId)).data.consultantId == request.auth.uid;
+      }
+      // Client portal — read-only access to tasks flagged clientVisible.
+      // Client role gate ships 2026-04-21 alongside Kanban MVP so the
+      // client portal at clients.ikaros.ae can read the board as soon
+      // as it's built. Consultants retain full read/update/delete.
+      function isClientWithEngagementAccess() {
+        return request.auth != null
+          && request.auth.token.role == 'client'
+          && resource.data.clientVisible == true
+          && request.auth.token.engagementIds.hasAny([resource.data.engagementId]);
+      }
+      allow read: if ownsEngagement(resource.data.engagementId)
+        || isClientWithEngagementAccess();
+      allow update, delete: if ownsEngagement(resource.data.engagementId);
+      allow create: if ownsEngagement(request.resource.data.engagementId);
+
+      // Append-only audit log for visibility flips and
+      // client-meaningful status transitions (to/from in_review or
+      // done). Rules mirror timesheetSubmissions/events — no
+      // updates, no deletes ever.
+      match /shareEvents/{eventId} {
+        allow read: if ownsEngagement(get(/databases/$(database)/documents/ikrs_tasks/$(taskId)).data.engagementId);
+        allow create: if request.auth != null
+          && request.resource.data.engagementId ==
+             get(/databases/$(database)/documents/ikrs_tasks/$(taskId)).data.engagementId;
+        allow update, delete: if false;
+      }
+    }
+
+    // Task notes — per-card discussion thread. Separate collection
+    // (not embedded in the Task doc) so realtime listeners on the
+    // Kanban don't re-fire on every keystroke. Engagement ownership
+    // derived via the parent task's engagementId stored on each note.
+    match /taskNotes/{noteId} {
+      function notesOwnsEngagement(engagementId) {
+        return request.auth != null
+          && get(/databases/$(database)/documents/engagements/$(engagementId)).data.consultantId == request.auth.uid;
+      }
+      function isClientOnNote() {
+        return request.auth != null
+          && request.auth.token.role == 'client'
+          && resource.data.clientVisible == true
+          && request.auth.token.engagementIds.hasAny([resource.data.engagementId]);
+      }
+      allow read: if notesOwnsEngagement(resource.data.engagementId)
+        || isClientOnNote();
+      allow create: if notesOwnsEngagement(request.resource.data.engagementId)
+        // Body length cap — prevents runaway writes; 32KB is ample
+        // for a human-written note, well under Firestore's 1MB
+        // per-document limit.
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 32768;
+      allow update: if notesOwnsEngagement(resource.data.engagementId)
+        && request.resource.data.engagementId == resource.data.engagementId
+        && request.resource.data.taskId == resource.data.taskId;
+      allow delete: if notesOwnsEngagement(resource.data.engagementId);
+    }
+
+    // Timesheet submissions (M3) — forward-compatible rules so the
+    // schema can land without another firestore.rules deploy round
+    // when M3 Phase 3c ships. `clientVisible` flag gates client-side
+    // reads; writes restricted to the owning consultant.
+    match /timesheetSubmissions/{submissionId} {
+      function isOwningConsultant() {
+        return request.auth != null
+          && resource.data.consultantId == request.auth.uid;
+      }
+      function hasClientAccess() {
+        return request.auth != null
+          && request.auth.token.role == 'client'
+          && resource.data.clientVisible == true
+          && request.auth.token.engagementIds.hasAny([resource.data.engagementId]);
+      }
+      allow read: if isOwningConsultant() || hasClientAccess();
+      allow create: if request.auth != null
+        && request.resource.data.consultantId == request.auth.uid;
+      allow update, delete: if isOwningConsultant();
+
+      // Append-only audit-log sub-collection (M3 AD-7). No updates or
+      // deletes ever — state transitions produce new events.
+      match /events/{eventId} {
+        allow read: if isOwningConsultant() || hasClientAccess();
+        allow create: if request.auth != null;
+        allow update, delete: if false;
+      }
+    }
+
+    // Deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

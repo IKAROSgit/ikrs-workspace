@@ -92,6 +92,7 @@ pub fn run() {
             commands::notes_sync::read_note_content,
             commands::task_watch::start_task_watch,
             commands::task_watch::stop_task_watch,
+            commands::task_watch::write_task_frontmatter,
             commands::vault::create_vault,
             commands::vault::archive_vault,
             commands::vault::restore_vault,

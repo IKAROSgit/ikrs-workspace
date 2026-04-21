@@ -6,6 +6,7 @@ import type {
   WriteVerificationEntry,
   WriteVerificationPayload,
 } from "@/types/claude";
+import { useCostLedgerStore } from "@/stores/costLedgerStore";
 
 interface ClaudeState {
   sessionId: string | null;
@@ -153,13 +154,26 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
     })),
 
   completeTurn: (costUsd, _durationMs) =>
-    set((state) => ({
-      status: state.sessionId ? "connected" : "disconnected",
-      totalCostUsd: state.totalCostUsd + costUsd,
-      messages: state.messages.map((m) =>
-        m.isStreaming ? { ...m, isStreaming: false } : m
-      ),
-    })),
+    set((state) => {
+      // Mirror the per-turn cost into the persistent ledger so the
+      // session details panel can show "today" / "this engagement
+      // all-time" rollups that survive reconnects. Guarded against
+      // a turn completing before engagementId is known (defensive —
+      // stream handler sets both together, but we don't want to
+      // double-count if ordering ever skews).
+      if (costUsd > 0 && state.engagementId) {
+        useCostLedgerStore
+          .getState()
+          .addCost(state.engagementId, costUsd);
+      }
+      return {
+        status: state.sessionId ? "connected" : "disconnected",
+        totalCostUsd: state.totalCostUsd + costUsd,
+        messages: state.messages.map((m) =>
+          m.isStreaming ? { ...m, isStreaming: false } : m
+        ),
+      };
+    }),
 
   setError: (message) =>
     set({

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useClaudeStore } from "@/stores/claudeStore";
+import { useCostLedgerStore } from "@/stores/costLedgerStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 
 interface SessionDetailsModalProps {
@@ -15,6 +16,14 @@ function formatDuration(startMs: number | null): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
+function todayKey(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export function SessionDetailsModal({ onClose }: SessionDetailsModalProps) {
   const sessionId = useClaudeStore((s) => s.sessionId);
   const status = useClaudeStore((s) => s.status);
@@ -28,6 +37,19 @@ export function SessionDetailsModal({ onClose }: SessionDetailsModalProps) {
 
   const engagement = engagements.find((e) => e.id === activeEngagementId);
   const client = clients.find((c) => c.id === engagement?.clientId);
+
+  // Subscribe to the ledger so the panel updates live if a turn
+  // completes while it's open. Reading the map (not a derived
+  // function) is what triggers re-renders; the selector functions
+  // are stable refs and wouldn't.
+  const ledger = useCostLedgerStore((s) => s.engagements);
+  const todayAcrossAll = useCostLedgerStore((s) => s.todayTotal)();
+  const todayThisEngagement = activeEngagementId
+    ? (ledger[activeEngagementId]?.byDay[todayKey()] ?? 0)
+    : 0;
+  const allTimeThisEngagement = activeEngagementId
+    ? (ledger[activeEngagementId]?.allTime ?? 0)
+    : 0;
 
   const ref = useRef<HTMLDivElement>(null);
 
@@ -87,6 +109,27 @@ export function SessionDetailsModal({ onClose }: SessionDetailsModalProps) {
 
         <span className="text-muted-foreground">Session ID</span>
         <span className="font-mono text-[10px] truncate">{sessionId ?? "—"}</span>
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-border">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+          Usage rollups <span className="normal-case">· persisted locally</span>
+        </div>
+        <div className="grid grid-cols-2 gap-y-1.5 gap-x-4">
+          <span className="text-muted-foreground">Today (all engagements)</span>
+          <span className="font-medium">${todayAcrossAll.toFixed(4)}</span>
+
+          <span className="text-muted-foreground">Today (this engagement)</span>
+          <span className="font-medium">${todayThisEngagement.toFixed(4)}</span>
+
+          <span className="text-muted-foreground">This engagement · all-time</span>
+          <span className="font-medium">${allTimeThisEngagement.toFixed(4)}</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+          Meter only — your Max subscription absorbs this until your
+          monthly allowance is spent. Rollups survive reconnects and
+          app restarts; clearing browser storage resets them.
+        </p>
       </div>
     </div>
   );

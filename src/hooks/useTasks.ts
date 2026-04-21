@@ -1,7 +1,9 @@
 import { useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useTaskStore } from "@/stores/taskStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useEngagementActions } from "@/providers/EngagementProvider";
+import { markTaskPendingLocal } from "@/hooks/useTaskVaultBridge";
 import type { Task, TaskStatus, TaskPriority } from "@/types";
 
 /** Monotonic sort-order generator shared with useTaskVaultBridge
@@ -49,10 +51,59 @@ export function useTasks() {
     return setting === "open-book";
   }, [activeEngagementId, engagements]);
 
+  /** Resolve the client-slug (vault folder name) for the active
+   *  engagement — needed for the vault-write path. */
+  const clients = useEngagementStore((s) => s.clients);
+  const resolveClientSlug = useCallback((): string | null => {
+    const eng = engagements.find((e) => e.id === activeEngagementId);
+    if (!eng) return null;
+    return clients.find((c) => c.id === eng.clientId)?.slug ?? null;
+  }, [activeEngagementId, engagements, clients]);
+
+  /** Fire-and-forget vault-mirror of a task edit. Safe to call from
+   *  any UI action — if the vault file doesn't exist yet this
+   *  creates it; if it does, existing note body is preserved
+   *  verbatim. `markTaskPendingLocal` is called FIRST so the
+   *  watcher's echo event is suppressed by the 2s anti-flicker
+   *  window. Failures are logged but not surfaced to the UI — the
+   *  Firestore write is authoritative for the Kanban. */
+  const mirrorToVault = useCallback(
+    async (
+      taskId: string,
+      patch: {
+        title?: string;
+        status?: TaskStatus;
+        priority?: TaskPriority;
+        tags?: string[];
+        due?: string | null;
+        client_visible?: boolean | null;
+        description?: string;
+        assignee?: string;
+      },
+    ) => {
+      const slug = resolveClientSlug();
+      if (!slug) return;
+      markTaskPendingLocal(taskId);
+      try {
+        await invoke("write_task_frontmatter", {
+          clientSlug: slug,
+          patch: { id: taskId, ...patch },
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[mirrorToVault] failed", e);
+      }
+    },
+    [resolveClientSlug],
+  );
+
   const addTask = useCallback(
     async (title: string, priority: TaskPriority = "p2") => {
       if (!activeEngagementId) return;
-      await createTask({
+      const clientVisible = resolveDefaultVisible();
+      // Let Firestore assign the id on create, then mirror to vault
+      // with that id so the two stay aligned from t=0.
+      const newId = await createTask({
         engagementId: activeEngagementId,
         title,
         status: "backlog",
@@ -61,31 +112,42 @@ export function useTasks() {
         subtasks: [],
         sortOrder: nextSortOrder(),
         source: "manual",
-        clientVisible: resolveDefaultVisible(),
+        clientVisible,
         assignee: "consultant",
         notesCount: 0,
         driveLinks: [],
       });
+      // Fire-and-forget vault mirror. No await — don't block the UI.
+      void mirrorToVault(newId, {
+        title,
+        status: "backlog",
+        priority,
+        client_visible: clientVisible,
+      });
     },
-    [activeEngagementId, createTask, resolveDefaultVisible],
+    [activeEngagementId, createTask, resolveDefaultVisible, mirrorToVault],
   );
 
   const changeStatus = useCallback(
     async (taskId: string, nextStatus: TaskStatus) => {
       await changeTaskStatus(taskId, nextStatus);
+      void mirrorToVault(taskId, { status: nextStatus });
     },
-    [changeTaskStatus],
+    [changeTaskStatus, mirrorToVault],
   );
 
   const setPriority = useCallback(
     async (taskId: string, priority: TaskPriority) => {
       await updateTask(taskId, { priority });
+      void mirrorToVault(taskId, { priority });
     },
-    [updateTask],
+    [updateTask, mirrorToVault],
   );
 
   const reorderWithinColumn = useCallback(
     async (taskId: string, newSortOrder: number) => {
+      // sortOrder is UI-only — don't mirror to vault (frontmatter
+      // doesn't carry ordering; it'd churn the file for no value).
       await updateTask(taskId, { sortOrder: newSortOrder });
     },
     [updateTask],
@@ -93,6 +155,9 @@ export function useTasks() {
 
   const remove = useCallback(
     async (taskId: string) => {
+      // We don't delete the vault file — Moe may still want the
+      // history. Firestore deletion is authoritative for the board;
+      // the vault file becomes orphaned until a manual cleanup.
       await deleteTask(taskId);
     },
     [deleteTask],
@@ -121,22 +186,35 @@ export function useTasks() {
   const setTitle = useCallback(
     async (taskId: string, title: string) => {
       await updateTask(taskId, { title });
+      void mirrorToVault(taskId, { title });
     },
-    [updateTask],
+    [updateTask, mirrorToVault],
   );
 
   const setDescription = useCallback(
     async (taskId: string, description: string) => {
       await updateTask(taskId, { description });
+      void mirrorToVault(taskId, { description });
     },
-    [updateTask],
+    [updateTask, mirrorToVault],
   );
 
   const setDueDate = useCallback(
     async (taskId: string, dueDate: Date | undefined) => {
       await updateTask(taskId, { dueDate });
+      void mirrorToVault(taskId, {
+        due: dueDate ? dueDate.toISOString().slice(0, 10) : null,
+      });
     },
-    [updateTask],
+    [updateTask, mirrorToVault],
+  );
+
+  const setClientVisible = useCallback(
+    async (taskId: string, visible: boolean) => {
+      await setTaskClientVisible(taskId, visible);
+      void mirrorToVault(taskId, { client_visible: visible });
+    },
+    [setTaskClientVisible, mirrorToVault],
   );
 
   return {
@@ -147,7 +225,7 @@ export function useTasks() {
     reorderWithinColumn,
     remove,
     addNote: addTaskNote,
-    setClientVisible: setTaskClientVisible,
+    setClientVisible,
     addDriveLink,
     removeDriveLink,
     setTitle,

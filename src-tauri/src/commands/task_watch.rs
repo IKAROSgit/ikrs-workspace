@@ -54,23 +54,24 @@ pub struct TaskFrontmatter {
     pub status: String,
     #[serde(default = "default_priority")]
     pub priority: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_visible: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default = "default_assignee")]
     pub assignee: String,
     /// Relative path inside the vault — e.g. "02-tasks/abc123.md"
-    /// Filled in by the watcher, not by Claude.
-    #[serde(default)]
+    /// Filled by the watcher at emit time; NEVER persisted to the
+    /// markdown file (skip_serializing_if empty).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub vault_path: String,
     /// Engagement id for the frontend to scope the Firestore write.
-    /// Filled by the watcher, not Claude.
-    #[serde(default)]
+    /// Filled by the watcher; NEVER persisted.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub engagement_id: String,
 }
 
@@ -210,6 +211,232 @@ pub fn stop_task_watch(state: State<'_, TaskWatchState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Input schema for `write_task_frontmatter` — shares field names
+/// with `TaskFrontmatter` but all fields are optional so the UI
+/// can patch a subset (e.g. just status + updatedAt). When a field
+/// is `None` we preserve whatever the existing file carries.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct TaskFrontmatterPatch {
+    pub id: String,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub due: Option<Option<String>>,
+    pub client_visible: Option<Option<bool>>,
+    pub description: Option<String>,
+    pub assignee: Option<String>,
+}
+
+/// Write the vault markdown file for a task, preserving the
+/// existing note body.
+///
+/// CRITICAL data-loss guard (Codex 2026-04-21 E2E must-fix #4):
+/// the previous bridge was one-way (vault → Firestore). A UI edit
+/// in the drawer (title, status, priority, client-visible toggle)
+/// only updated Firestore. The next time Claude wrote the same
+/// file, the stale markdown frontmatter would overwrite the
+/// Firestore value via the watcher. Silent data loss.
+///
+/// Contract of this function:
+///   1. If the file exists, read it and split body from frontmatter.
+///   2. Merge the patch with the existing frontmatter — any field
+///      the caller left `None` keeps its existing value.
+///   3. Re-serialise YAML + append the preserved body.
+///   4. Write atomically via tmp + rename (so a crash mid-write
+///      can never leave a truncated or empty file on disk).
+///   5. Never delete the file. Never truncate body. Never return
+///      OK without the target file existing with non-zero size
+///      after rename.
+///
+/// Caller is responsible for calling `markTaskPendingLocal` in the
+/// frontend BEFORE invoking this, so the watcher's notify event
+/// is suppressed by the 2s anti-flicker window.
+#[tauri::command]
+pub fn write_task_frontmatter(
+    client_slug: String,
+    patch: TaskFrontmatterPatch,
+) -> Result<(), String> {
+    use crate::commands::vault::vault_path_for_slug;
+    use std::io::Write;
+
+    if patch.id.is_empty() {
+        return Err("id required".to_string());
+    }
+    // id must look like a filename-safe slug — no path separators,
+    // no `..`, no null bytes, no control chars.
+    if patch.id.contains('/')
+        || patch.id.contains('\\')
+        || patch.id.contains("..")
+        || patch.id.contains('\0')
+        || patch.id.chars().any(|c| c.is_control())
+    {
+        return Err("invalid task id".to_string());
+    }
+
+    let vault_root = vault_path_for_slug(&client_slug)?;
+    let tasks_dir = vault_root.join("02-tasks");
+    std::fs::create_dir_all(&tasks_dir)
+        .map_err(|e| format!("create 02-tasks: {e}"))?;
+
+    let target = tasks_dir.join(format!("{}.md", patch.id));
+
+    // Read existing file (may or may not exist). We preserve the
+    // note body verbatim and merge frontmatter fields.
+    let (existing_fm, existing_body) = if target.exists() {
+        let raw = std::fs::read_to_string(&target)
+            .map_err(|e| format!("read existing: {e}"))?;
+        let (fm, body) = split_frontmatter(&raw);
+        (fm, body)
+    } else {
+        (None, String::new())
+    };
+
+    let merged = merge_frontmatter(existing_fm.as_ref(), &patch)?;
+    let yaml = serde_yaml::to_string(&merged)
+        .map_err(|e| format!("serialize yaml: {e}"))?;
+
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&yaml);
+    // serde_yaml emits a trailing newline; don't double up.
+    if !yaml.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("---\n");
+    // Preserve the existing body EXACTLY as-is. If the file is new,
+    // body is empty; we don't auto-generate filler.
+    out.push_str(&existing_body);
+
+    // Atomic write: tmp in the same directory, then rename. Rename
+    // is atomic on the same filesystem; a partial or crashed write
+    // leaves only the pre-existing file intact.
+    let tmp = tasks_dir.join(format!(".{}.md.tmp", patch.id));
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)
+            .map_err(|e| format!("open tmp: {e}"))?;
+        f.write_all(out.as_bytes())
+            .map_err(|e| format!("write tmp: {e}"))?;
+        f.sync_all()
+            .map_err(|e| format!("sync tmp: {e}"))?;
+    }
+    std::fs::rename(&tmp, &target)
+        .map_err(|e| format!("rename tmp→target: {e}"))?;
+
+    // Post-write verification: file exists, non-zero size, parses.
+    let meta = std::fs::metadata(&target)
+        .map_err(|e| format!("post-write stat: {e}"))?;
+    if meta.len() == 0 {
+        return Err("post-write size is zero (aborting)".to_string());
+    }
+    // Round-trip parse — catches a catastrophic serde bug before
+    // the watcher fires a malformed event back to the UI.
+    let verify = std::fs::read_to_string(&target)
+        .map_err(|e| format!("verify read: {e}"))?;
+    let _ = parse_frontmatter(&verify)
+        .map_err(|e| format!("verify parse: {e}"))?;
+
+    Ok(())
+}
+
+/// Split a markdown file into (frontmatter_yaml_string,
+/// body_string_including_leading_newlines). If there's no
+/// frontmatter, returns (None, full_content).
+pub(crate) fn split_frontmatter(md: &str) -> (Option<String>, String) {
+    let trimmed = md.trim_start_matches('\u{feff}');
+    if !trimmed.starts_with("---") {
+        return (None, md.to_string());
+    }
+    let after_open = &trimmed[3..];
+    let Some(end) = after_open.find("\n---") else {
+        // Unterminated — treat whole file as body to avoid data loss.
+        return (None, md.to_string());
+    };
+    let yaml = after_open[..end].trim_start_matches('\n').to_string();
+    // Body = everything after the closing "---\n".
+    let rest = &after_open[end + 4..];
+    // Preserve the leading newline so round-trip stays tidy.
+    let body = if let Some(stripped) = rest.strip_prefix('\n') {
+        stripped.to_string()
+    } else {
+        rest.to_string()
+    };
+    (Some(yaml), body)
+}
+
+/// Merge a patch on top of the existing frontmatter. Fields the
+/// patch left `None` fall back to the existing value. For
+/// `Option<Option<T>>` fields like `due` and `client_visible`, the
+/// outer `None` means "don't touch"; `Some(None)` means "clear".
+fn merge_frontmatter(
+    existing_yaml: Option<&String>,
+    patch: &TaskFrontmatterPatch,
+) -> Result<TaskFrontmatter, String> {
+    let base: TaskFrontmatter = if let Some(y) = existing_yaml {
+        serde_yaml::from_str(y)
+            .map_err(|e| format!("existing yaml parse: {e}"))?
+    } else {
+        TaskFrontmatter {
+            id: patch.id.clone(),
+            title: patch.title.clone().unwrap_or_default(),
+            status: patch.status.clone().unwrap_or_else(|| "backlog".into()),
+            priority: patch.priority.clone().unwrap_or_else(default_priority),
+            tags: patch.tags.clone().unwrap_or_default(),
+            due: match &patch.due {
+                Some(v) => v.clone(),
+                None => None,
+            },
+            client_visible: match &patch.client_visible {
+                Some(v) => *v,
+                None => None,
+            },
+            description: patch.description.clone(),
+            assignee: patch.assignee.clone().unwrap_or_else(default_assignee),
+            vault_path: String::new(),
+            engagement_id: String::new(),
+        }
+    };
+
+    let mut merged = base;
+    merged.id = patch.id.clone(); // always from patch — that's the key.
+    if let Some(v) = patch.title.clone() {
+        merged.title = v;
+    }
+    if let Some(v) = patch.status.clone() {
+        merged.status = v;
+    }
+    if let Some(v) = patch.priority.clone() {
+        merged.priority = v;
+    }
+    if let Some(v) = patch.tags.clone() {
+        merged.tags = v;
+    }
+    if let Some(v) = &patch.due {
+        merged.due = v.clone();
+    }
+    if let Some(v) = &patch.client_visible {
+        merged.client_visible = *v;
+    }
+    if patch.description.is_some() {
+        merged.description = patch.description.clone();
+    }
+    if let Some(v) = patch.assignee.clone() {
+        merged.assignee = v;
+    }
+
+    // Never write runtime-injected fields to the file. They live in
+    // the watcher payload only.
+    merged.vault_path = String::new();
+    merged.engagement_id = String::new();
+
+    Ok(merged)
+}
+
 /// Parse the leading `---\n...\n---` YAML frontmatter from a
 /// markdown file. Body is ignored here — the note body gets
 /// persisted into Firestore's separate `taskNotes` collection by
@@ -304,5 +531,184 @@ body"#;
         let md = "\u{feff}---\nid: t1\ntitle: x\nstatus: backlog\n---\n";
         let fm = parse_frontmatter(md).unwrap();
         assert_eq!(fm.id, "t1");
+    }
+
+    // ---- split_frontmatter + merge_frontmatter round-trip tests ----
+
+    #[test]
+    fn test_split_frontmatter_basic() {
+        let md = "---\nid: a\ntitle: b\nstatus: backlog\n---\nhello body\n";
+        let (fm, body) = split_frontmatter(md);
+        assert!(fm.is_some());
+        assert_eq!(body, "hello body\n");
+    }
+
+    #[test]
+    fn test_split_frontmatter_no_fm_preserves_body() {
+        let md = "# no frontmatter here\n\njust body";
+        let (fm, body) = split_frontmatter(md);
+        assert!(fm.is_none());
+        assert_eq!(body, md);
+    }
+
+    #[test]
+    fn test_split_frontmatter_unterminated_preserves_as_body() {
+        // An unterminated frontmatter block MUST NOT be treated as
+        // frontmatter — we'd lose content on a subsequent write.
+        let md = "---\nid: a\ntitle: unfinished\n\nno closing";
+        let (fm, body) = split_frontmatter(md);
+        assert!(fm.is_none());
+        assert_eq!(body, md);
+    }
+
+    #[test]
+    fn test_merge_preserves_existing_when_patch_empty() {
+        let existing = "id: x\ntitle: Existing\nstatus: in_progress\npriority: p1\ntags: [a, b]\n";
+        let patch = TaskFrontmatterPatch {
+            id: "x".to_string(),
+            ..Default::default()
+        };
+        let merged = merge_frontmatter(Some(&existing.to_string()), &patch).unwrap();
+        assert_eq!(merged.title, "Existing");
+        assert_eq!(merged.status, "in_progress");
+        assert_eq!(merged.priority, "p1");
+        assert_eq!(merged.tags, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_merge_patch_wins_over_existing() {
+        let existing = "id: x\ntitle: Old\nstatus: in_progress\npriority: p1\n";
+        let patch = TaskFrontmatterPatch {
+            id: "x".to_string(),
+            title: Some("New".to_string()),
+            status: Some("done".to_string()),
+            ..Default::default()
+        };
+        let merged = merge_frontmatter(Some(&existing.to_string()), &patch).unwrap();
+        assert_eq!(merged.title, "New");
+        assert_eq!(merged.status, "done");
+        assert_eq!(merged.priority, "p1"); // untouched
+    }
+
+    #[test]
+    fn test_merge_clear_optional_with_inner_none() {
+        // Option<Option<T>> semantics: Some(None) clears, None
+        // leaves alone.
+        let existing = "id: x\ntitle: t\nstatus: s\npriority: p2\ndue: 2026-05-01\n";
+        let patch = TaskFrontmatterPatch {
+            id: "x".to_string(),
+            due: Some(None),
+            ..Default::default()
+        };
+        let merged = merge_frontmatter(Some(&existing.to_string()), &patch).unwrap();
+        assert_eq!(merged.due, None);
+    }
+
+    #[test]
+    fn test_merge_preserves_when_due_is_outer_none() {
+        let existing = "id: x\ntitle: t\nstatus: s\npriority: p2\ndue: 2026-05-01\n";
+        let patch = TaskFrontmatterPatch {
+            id: "x".to_string(),
+            due: None,
+            ..Default::default()
+        };
+        let merged = merge_frontmatter(Some(&existing.to_string()), &patch).unwrap();
+        assert_eq!(merged.due.as_deref(), Some("2026-05-01"));
+    }
+
+    #[test]
+    fn test_write_task_frontmatter_preserves_body() {
+        // Create a vault + an existing task file with a meaningful
+        // body. Then patch just the status. Body must survive.
+        let tmp = std::env::temp_dir()
+            .join(format!("ikrs-vault-{}", uuid::Uuid::new_v4()));
+        let vaults = dirs::home_dir().unwrap().join(".ikrs-workspace/vaults");
+        std::fs::create_dir_all(&vaults).unwrap();
+        let slug = format!("_test_write_{}", uuid::Uuid::new_v4());
+        let vault = vaults.join(&slug);
+        let tasks = vault.join("02-tasks");
+        std::fs::create_dir_all(&tasks).unwrap();
+        let id = "test-task-1";
+        let body = "\n## Context\n\nMeeting notes from 2026-04-10 Angelique sync.\nAngel raised a concern about the SOW.\n\n## Update\n\n- [ ] Review proposal\n- [ ] Follow up with Karla\n";
+        let initial =
+            format!("---\nid: {id}\ntitle: Original title\nstatus: backlog\npriority: p2\n---\n{body}");
+        let target = tasks.join(format!("{id}.md"));
+        std::fs::write(&target, &initial).unwrap();
+
+        let patch = TaskFrontmatterPatch {
+            id: id.to_string(),
+            status: Some("in_progress".to_string()),
+            ..Default::default()
+        };
+        write_task_frontmatter(slug.clone(), patch).unwrap();
+
+        let result = std::fs::read_to_string(&target).unwrap();
+        // Body must be present verbatim.
+        assert!(result.contains("Meeting notes from 2026-04-10"));
+        assert!(result.contains("- [ ] Follow up with Karla"));
+        // Status must be updated.
+        assert!(result.contains("status: in_progress"));
+        // Title must be preserved (not patched).
+        assert!(result.contains("title: Original title"));
+        // The runtime-only fields must NOT be written.
+        assert!(!result.contains("vault_path:"));
+        assert!(!result.contains("engagement_id:"));
+
+        std::fs::remove_dir_all(&vault).ok();
+        let _ = tmp;
+    }
+
+    #[test]
+    fn test_write_task_frontmatter_rejects_bad_id() {
+        let patch = TaskFrontmatterPatch {
+            id: "../evil".to_string(),
+            ..Default::default()
+        };
+        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+
+        let patch = TaskFrontmatterPatch {
+            id: "a/b".to_string(),
+            ..Default::default()
+        };
+        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+
+        let patch = TaskFrontmatterPatch {
+            id: String::new(),
+            ..Default::default()
+        };
+        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+
+        let patch = TaskFrontmatterPatch {
+            id: "null\0byte".to_string(),
+            ..Default::default()
+        };
+        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+    }
+
+    #[test]
+    fn test_write_task_creates_new_file_without_existing() {
+        let vaults = dirs::home_dir().unwrap().join(".ikrs-workspace/vaults");
+        std::fs::create_dir_all(&vaults).unwrap();
+        let slug = format!("_test_new_{}", uuid::Uuid::new_v4());
+        let patch = TaskFrontmatterPatch {
+            id: "fresh-task".to_string(),
+            title: Some("Fresh from UI".to_string()),
+            status: Some("backlog".to_string()),
+            ..Default::default()
+        };
+        write_task_frontmatter(slug.clone(), patch).unwrap();
+        let target = vaults
+            .join(&slug)
+            .join("02-tasks")
+            .join("fresh-task.md");
+        assert!(target.exists());
+        let content = std::fs::read_to_string(&target).unwrap();
+        assert!(content.contains("id: fresh-task"));
+        assert!(content.contains("title: Fresh from UI"));
+        // No spurious body on a brand-new file.
+        let (_, body) = split_frontmatter(&content);
+        assert_eq!(body.trim(), "");
+
+        std::fs::remove_dir_all(vaults.join(&slug)).ok();
     }
 }

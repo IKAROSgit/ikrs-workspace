@@ -6,6 +6,7 @@ import { ToolActivityCard } from "@/components/chat/ToolActivityCard";
 import { InputBar } from "@/components/chat/InputBar";
 import { SessionIndicator } from "@/components/chat/SessionIndicator";
 import { SavedFilesPanel } from "@/components/chat/SavedFilesPanel";
+import { ResizableLayout } from "@/components/layout/ResizableLayout";
 import { useClaudeStream } from "@/hooks/useClaudeStream";
 import { useClaudeStore } from "@/stores/claudeStore";
 import { useEngagementStore } from "@/stores/engagementStore";
@@ -45,6 +46,7 @@ export default function ChatView() {
   const totalCostUsd = useClaudeStore((s) => s.totalCostUsd);
   const model = useClaudeStore((s) => s.model);
   const error = useClaudeStore((s) => s.error);
+  const writeVerifications = useClaudeStore((s) => s.writeVerifications);
 
   const authError = useClaudeStore((s) => s.authError);
   const clearAuthError = useClaudeStore((s) => s.clearAuthError);
@@ -172,8 +174,11 @@ export default function ChatView() {
         </div>
       )}
 
-      {/* Body: messages on the left, ground-truth saved-files ledger on the right */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Body: messages + saved-files ledger in a resizable 2-pane. */}
+      <ResizableLayout
+        viewKey="chat"
+        right={writeVerifications.length > 0 ? <SavedFilesPanel /> : null}
+      >
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
@@ -223,10 +228,7 @@ export default function ChatView() {
 
         <div ref={messagesEndRef} />
         </div>
-        {/* Ground-truth saved-files ledger. Only renders when there
-            are entries, so pre-first-save the chat spans the full width. */}
-        <SavedFilesPanel />
-      </div>
+      </ResizableLayout>
 
       <InputBar
         onSend={handleSend}

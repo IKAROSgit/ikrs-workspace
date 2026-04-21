@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   onSnapshot,
+  orderBy,
   query,
   where,
 } from "firebase/firestore";
@@ -15,7 +16,13 @@ import { db } from "@/lib/firebase";
 import { useTasks } from "@/hooks/useTasks";
 import { KANBAN_COLUMNS } from "./KanbanColumn";
 import { cn } from "@/lib/utils";
-import type { Task, TaskNote, TaskPriority, TaskStatus } from "@/types";
+import type {
+  Task,
+  TaskNote,
+  TaskPriority,
+  TaskShareEvent,
+  TaskStatus,
+} from "@/types";
 
 /**
  * Task detail drawer. Slides in from the right when a card is
@@ -57,6 +64,7 @@ export function TaskDetailDrawer({
   const [noteSending, setNoteSending] = useState(false);
   const [newLink, setNewLink] = useState("");
   const [notes, setNotes] = useState<TaskNote[]>([]);
+  const [shareEvents, setShareEvents] = useState<TaskShareEvent[]>([]);
 
   // Reset local state when switching cards.
   useEffect(() => {
@@ -84,6 +92,25 @@ export function TaskDetailDrawer({
         return tb - ta; // newest first
       });
       setNotes(rows);
+    });
+    return unsub;
+  }, [task.id]);
+
+  // Subscribe to the shareEvents audit subcollection. Codex §B.3
+  // flagged that we were writing these to Firestore but never
+  // reading them back — so the audit trail existed on the server
+  // but the consultant couldn't see what changed or when. Rendering
+  // them here closes that transparency gap: every visibility flip
+  // and critical status transition has a visible log entry.
+  useEffect(() => {
+    const q = query(
+      collection(db, "ikrs_tasks", task.id, "shareEvents"),
+      orderBy("timestamp", "desc"),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setShareEvents(
+        snap.docs.map((d) => ({ ...d.data(), id: d.id }) as TaskShareEvent),
+      );
     });
     return unsub;
   }, [task.id]);
@@ -353,6 +380,51 @@ export function TaskDetailDrawer({
             )}
           </section>
 
+          {/* Audit trail */}
+          <section>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+              Audit trail ({shareEvents.length})
+            </div>
+            {shareEvents.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No visibility or critical status changes yet.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {shareEvents.map((e) => (
+                  <li
+                    key={e.id}
+                    className="text-[11px] border-l-2 border-border pl-2"
+                  >
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span className="font-medium">
+                        {e.by === "consultant" ? "you" : "claude"}
+                      </span>
+                      <span>·</span>
+                      <span>{formatDateTime(toMillis(e.timestamp))}</span>
+                    </div>
+                    <div className="mt-0.5">
+                      Changed{" "}
+                      <span className="font-medium">
+                        {e.field === "clientVisible"
+                          ? "visibility"
+                          : e.field}
+                      </span>
+                      : <code className="text-[10px]">{renderVal(e.from)}</code>{" "}
+                      →{" "}
+                      <code className="text-[10px]">{renderVal(e.to)}</code>
+                    </div>
+                    {e.reason && (
+                      <div className="text-[10px] text-muted-foreground mt-0.5 italic">
+                        {e.reason}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
           {/* Danger */}
           <section className="pt-4 border-t border-border">
             <Button
@@ -420,4 +492,10 @@ function displayUrl(raw: string): string {
 
 function isLikelyDriveUrl(u: string): boolean {
   return /drive\.google\.com|docs\.google\.com/.test(u);
+}
+
+function renderVal(v: string | boolean | null): string {
+  if (v === null) return "∅";
+  if (typeof v === "boolean") return v ? "visible" : "hidden";
+  return v;
 }
