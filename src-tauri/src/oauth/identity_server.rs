@@ -377,10 +377,27 @@ mod tests {
     /// must bind IPv6 (::1) whenever the OS supports it, because
     /// macOS resolves `localhost` to `::1` first. A future refactor
     /// that silently drops the IPv6 bind would reproduce the bug.
-    /// This test asks bind_with_fallback to pick an available port
-    /// and verifies that at least one listener is IPv6-capable.
+    ///
+    /// IPv4-only environments (locked-down CI, IPv6-disabled kernels)
+    /// are detected via a capability probe: we first try to bind
+    /// `::1` on a throwaway port. If that fails, the test is
+    /// skipped with `eprintln!` rather than asserted — Codex
+    /// 2026-04-22 pre-push P2: a hard assert here would produce
+    /// spurious failures on IPv4-only hosts even though
+    /// bind_with_fallback is correctly degrading.
     #[tokio::test]
     async fn bind_with_fallback_produces_ipv6_listener_when_available() {
+        // Capability probe — does this host support IPv6 loopback
+        // at all? Port 0 asks the OS for any free port.
+        let ipv6_supported = TcpListener::bind("[::1]:0").await.is_ok();
+        if !ipv6_supported {
+            eprintln!(
+                "bind_with_fallback_produces_ipv6_listener_when_available: \
+                 skipping — host has no IPv6 loopback support"
+            );
+            return;
+        }
+
         // Pick a high random port unlikely to collide with parallel
         // test runs or system services. Fallback range spans +10.
         let pref = 54321_u16;
@@ -388,10 +405,10 @@ mod tests {
             .await
             .expect("bind should succeed on a free port");
 
-        // At least one of the two listeners must be IPv6. If the OS
-        // genuinely has no IPv6 loopback, this test will skip that
-        // branch — but on any mainstream macOS/Linux/Windows CI
-        // runner, ::1 is available and must be bound.
+        // At least one of the two listeners must be IPv6. On this
+        // dual-stack host (confirmed by the probe above), the fix
+        // must deliver an IPv6 bind — otherwise we've regressed
+        // into the 2026-04-22 auth hang.
         let primary_is_v6 = primary
             .local_addr()
             .map(|a| a.is_ipv6())
