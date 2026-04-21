@@ -2,10 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: only authenticated @ikaros.ae staff
+    // Helper: only authenticated @ikaros.ae staff.
+    // 2026-04-21 fix (Codex pre-push review): regex was not anchored,
+    // so `user@ikaros.ae.attacker.com` matched. `matches()` is
+    // full-string in Firestore rules ONLY when the regex has both
+    // ^ and $ — without them it acts like `find()` and scans. Anchor
+    // both ends to close the domain-suffix bypass.
     function isIkarosStaff() {
       return request.auth != null
-        && request.auth.token.email.matches('.*@ikaros[.]ae');
+        && request.auth.token.email.matches('^[^@]+@ikaros[.]ae$');
     }
 
     // Tasks — staff only
@@ -109,8 +114,14 @@ service cloud.firestore {
       // done). Rules mirror timesheetSubmissions/events — no
       // updates, no deletes ever.
       match /shareEvents/{eventId} {
+        // 2026-04-21 fix (Codex pre-push): previous create rule only
+        // checked that the submitted engagementId matched the parent
+        // task's, which any authenticated user can satisfy by copying
+        // the value from a leaked taskId. Require actual ownership of
+        // that engagement — same gate as read/update/delete on the
+        // parent task itself.
         allow read: if ownsEngagement(get(/databases/$(database)/documents/ikrs_tasks/$(taskId)).data.engagementId);
-        allow create: if request.auth != null
+        allow create: if ownsEngagement(get(/databases/$(database)/documents/ikrs_tasks/$(taskId)).data.engagementId)
           && request.resource.data.engagementId ==
              get(/databases/$(database)/documents/ikrs_tasks/$(taskId)).data.engagementId;
         allow update, delete: if false;
@@ -169,8 +180,13 @@ service cloud.firestore {
       // Append-only audit-log sub-collection (M3 AD-7). No updates or
       // deletes ever — state transitions produce new events.
       match /events/{eventId} {
+        // 2026-04-21 fix (Codex pre-push): `if request.auth != null`
+        // let any signed-in user append fabricated events to any
+        // submission. Gate create by the same owner/client-access
+        // predicates used for read — preserving the append-only
+        // semantics while closing the forge-audit hole.
         allow read: if isOwningConsultant() || hasClientAccess();
-        allow create: if request.auth != null;
+        allow create: if isOwningConsultant() || hasClientAccess();
         allow update, delete: if false;
       }
     }

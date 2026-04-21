@@ -16,6 +16,36 @@ function nextSortOrder(): number {
   return Date.now() * 1000 + _sortCounter;
 }
 
+/** Per-task serialization queue for vault mirror writes.
+ *
+ *  Codex 2026-04-21 pre-push flagged a real race: two quick edits
+ *  on the same task (e.g. rename then status change) each fire an
+ *  independent `write_task_frontmatter`. Because each read-modifies-
+ *  then-writes the YAML, the later one may read before the earlier
+ *  one's write lands and clobber the intermediate state.
+ *
+ *  Fix: chain per-task writes through a Promise keyed by taskId.
+ *  When the chain becomes idle (completes without new enqueues) we
+ *  drop the map entry to avoid leaking memory for long-lived
+ *  boards. */
+const _vaultQueues = new Map<string, Promise<void>>();
+function enqueueVaultMirror(taskId: string, op: () => Promise<void>): Promise<void> {
+  const prev = _vaultQueues.get(taskId) ?? Promise.resolve();
+  // Chain regardless of prev outcome — a failed prior write must
+  // not poison later ones (each op is idempotent to the file's
+  // eventual state).
+  const next = prev.catch(() => undefined).then(op);
+  _vaultQueues.set(taskId, next);
+  // Clean up when the chain drains, but only if this `next` is
+  // still the tail — otherwise a later enqueue already took over.
+  void next.finally(() => {
+    if (_vaultQueues.get(taskId) === next) {
+      _vaultQueues.delete(taskId);
+    }
+  });
+  return next;
+}
+
 /**
  * Tasks hook — single surface over the zustand store + Firestore-
  * backed `EngagementProvider` actions.
@@ -68,7 +98,7 @@ export function useTasks() {
    *  window. Failures are logged but not surfaced to the UI — the
    *  Firestore write is authoritative for the Kanban. */
   const mirrorToVault = useCallback(
-    async (
+    (
       taskId: string,
       patch: {
         title?: string;
@@ -80,19 +110,28 @@ export function useTasks() {
         description?: string;
         assignee?: string;
       },
-    ) => {
+    ): Promise<void> => {
       const slug = resolveClientSlug();
-      if (!slug) return;
+      if (!slug) return Promise.resolve();
+      // Mark pending OUTSIDE the queue so the 2s anti-flicker window
+      // starts at mutation time (not at eventual write time). This
+      // matters when multiple writes are queued — all of their
+      // vault-echo events need to be suppressed from t=0.
       markTaskPendingLocal(taskId);
-      try {
-        await invoke("write_task_frontmatter", {
-          clientSlug: slug,
-          patch: { id: taskId, ...patch },
-        });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[mirrorToVault] failed", e);
-      }
+      // Per-task serialization — writes on the same taskId run in
+      // the order they were enqueued, so a fast title+status pair
+      // can't interleave and lose one field.
+      return enqueueVaultMirror(taskId, async () => {
+        try {
+          await invoke("write_task_frontmatter", {
+            clientSlug: slug,
+            patch: { id: taskId, ...patch },
+          });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn("[mirrorToVault] failed", e);
+        }
+      });
     },
     [resolveClientSlug],
   );

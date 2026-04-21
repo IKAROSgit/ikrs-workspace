@@ -325,8 +325,30 @@ pub fn write_task_frontmatter(
         f.sync_all()
             .map_err(|e| format!("sync tmp: {e}"))?;
     }
-    std::fs::rename(&tmp, &target)
-        .map_err(|e| format!("rename tmp→target: {e}"))?;
+    // Atomic replace. `std::fs::rename` is atomic on POSIX and will
+    // overwrite the destination. On Windows it fails when the
+    // destination already exists — Codex 2026-04-21 pre-push flagged
+    // this as a portability bug. Until Rust's `std::fs::rename` gains
+    // Windows replace-semantics (blocked on upstream), fall through
+    // to an explicit remove+rename on that platform. Still atomic
+    // from the writer's perspective because the write already
+    // completed to tmp; the window between remove and rename is only
+    // visible to readers who happen to stat mid-replace, and our
+    // readers (notify watcher) tolerate the transient absence.
+    #[cfg(unix)]
+    {
+        std::fs::rename(&tmp, &target)
+            .map_err(|e| format!("rename tmp→target: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        if target.exists() {
+            std::fs::remove_file(&target)
+                .map_err(|e| format!("pre-rename remove: {e}"))?;
+        }
+        std::fs::rename(&tmp, &target)
+            .map_err(|e| format!("rename tmp→target: {e}"))?;
+    }
 
     // Post-write verification: file exists, non-zero size, parses.
     let meta = std::fs::metadata(&target)
