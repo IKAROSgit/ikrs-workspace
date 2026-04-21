@@ -213,6 +213,20 @@ pub fn start_task_watch(
         .watch(&tasks_dir, RecursiveMode::NonRecursive)
         .map_err(|e| format!("notify watch {tasks_dir:?}: {e}"))?;
 
+    // Initial scan: emit synthetic task:vault-change events for
+    // every existing .md file in 02-tasks/. 2026-04-22 fix —
+    // `notify` fires only on filesystem changes, so a watcher
+    // started after files were written (legacy imports, tasks
+    // created while the watcher was looking at the wrong path,
+    // etc.) would never sync them to Firestore. The scan runs
+    // off-thread so start_task_watch still returns promptly.
+    let scan_app = app.clone();
+    let scan_tasks_dir = tasks_dir.clone();
+    let scan_engagement_id = engagement_id.clone();
+    tokio::spawn(async move {
+        emit_initial_scan(&scan_app, &scan_tasks_dir, &scan_engagement_id).await;
+    });
+
     let active = ActiveWatcher {
         engagement_id,
         tasks_dir,
@@ -221,6 +235,85 @@ pub fn start_task_watch(
     };
     *state.0.lock().unwrap() = Some(active);
     Ok(())
+}
+
+/// Walk the 02-tasks/ directory once on watcher start and emit a
+/// synthetic `task:vault-change` event per .md file so the
+/// frontend's Firestore-sync handler can ingest pre-existing files.
+/// Parse failures are logged and skipped — they'll re-attempt on
+/// the next real notify event after the user/Claude fixes them.
+async fn emit_initial_scan(
+    app: &AppHandle,
+    tasks_dir: &std::path::Path,
+    engagement_id: &str,
+) {
+    let entries = match std::fs::read_dir(tasks_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            log::debug!("initial scan: read_dir {tasks_dir:?}: {e}");
+            return;
+        }
+    };
+    let mut emitted = 0usize;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        // Skip dotfiles (incl. .*.md.tmp from our own atomic writes).
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with('.'))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("initial scan read {path:?}: {e}");
+                continue;
+            }
+        };
+        let parsed = match parse_frontmatter(&content) {
+            Ok(p) => p,
+            Err(e) => {
+                log::debug!("initial scan frontmatter {path:?}: {e}");
+                continue;
+            }
+        };
+        let rel = path
+            .strip_prefix(tasks_dir.parent().unwrap_or(tasks_dir))
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| {
+                path.file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
+        let payload = TaskFrontmatter {
+            vault_path: rel,
+            engagement_id: engagement_id.to_string(),
+            ..parsed
+        };
+        let _ = app.emit("task:vault-change", &payload);
+        emitted += 1;
+        // Yield between emits so a huge vault (1000s of tasks)
+        // doesn't starve the UI thread / Firestore writer.
+        if emitted % 25 == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    if emitted > 0 {
+        log::info!(
+            "initial scan emitted {emitted} task(s) from {}",
+            tasks_dir.display()
+        );
+    }
 }
 
 /// Explicit stop for the active watcher. Not strictly required —
