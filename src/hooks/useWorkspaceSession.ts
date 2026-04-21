@@ -4,10 +4,12 @@ import { useEngagementStore } from "@/stores/engagementStore";
 import {
   killClaudeSession,
   spawnClaudeSession,
+  sendClaudeMessage,
   getResumeSessionId,
   claudeVersionCheck,
   claudeAuthStatus,
 } from "@/lib/tauri-commands";
+import { composeSessionBriefing } from "@/lib/briefing";
 
 /**
  * Polls claudeStore.status via subscribe() with a timeout.
@@ -32,6 +34,44 @@ function waitForStatus(target: string, timeoutMs: number): Promise<boolean> {
       }
     });
   });
+}
+
+/**
+ * Fire-and-forget session-boot briefing injection. Composes the
+ * briefing markdown and sends it to Claude as a synthetic first-
+ * user-message — the CLI processes it, emits system:init, and
+ * streams back a proactive opener that the user sees in their
+ * normal chat transcript. The briefing itself is NOT added to
+ * `useClaudeStore.messages`, so the user never sees the raw data
+ * dump they didn't type (only Claude's response to it).
+ *
+ * Intentionally silent on failure — if the briefing can't be built
+ * (offline, APIs down, slug missing) we just let Claude cold-start.
+ * Better to skip the briefing than block session boot.
+ *
+ * Called only on FRESH spawn paths, never on --resume; resumed
+ * sessions have the prior conversation history, so injecting a
+ * briefing would confuse the model with a repeated "here's today's
+ * state" turn mid-thread.
+ */
+async function injectSessionBriefing(
+  sessionId: string,
+  engagementId: string,
+  clientSlug: string | undefined,
+): Promise<void> {
+  try {
+    const briefing = await composeSessionBriefing(engagementId, clientSlug);
+    if (briefing.trim().length === 0) return;
+    // Mirror the "thinking" state so the UI shows activity during
+    // the first streamed response, matching what the user would see
+    // after a normal send. Claude's `assistant` frames will flip
+    // status back to "connected" via completeTurn.
+    useClaudeStore.setState({ status: "thinking" });
+    await sendClaudeMessage(sessionId, briefing);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[briefing] failed, Claude will cold-start", e);
+  }
 }
 
 export function useWorkspaceSession() {
@@ -129,7 +169,23 @@ export function useWorkspaceSession() {
               "initializing",
             );
           }
+          // Retry path is effectively a fresh spawn — brief it.
+          void injectSessionBriefing(
+            retrySessionId,
+            engagement.id,
+            client?.slug,
+          );
         }
+        // Successful resume: do NOT brief. Conversation history is
+        // already in Claude's context; a briefing would duplicate.
+      } else {
+        // Fresh spawn — inject the briefing so Claude opens
+        // proactively instead of "what do you want to work on?".
+        void injectSessionBriefing(
+          spawnedSessionId,
+          engagement.id,
+          client?.slug,
+        );
       }
     } catch (e) {
       useClaudeStore.getState().setError(e instanceof Error ? e.message : String(e));
@@ -217,7 +273,21 @@ export function useWorkspaceSession() {
                 "initializing",
               );
             }
+            // Retry path is a fresh spawn — brief it.
+            void injectSessionBriefing(
+              retryId,
+              newEngagementId,
+              switchClient?.slug,
+            );
           }
+          // Successful resume: no briefing (see connect() for reasoning).
+        } else {
+          // Fresh spawn on the new engagement — brief.
+          void injectSessionBriefing(
+            switchSessionId,
+            newEngagementId,
+            switchClient?.slug,
+          );
         }
       }
     } catch (e) {
