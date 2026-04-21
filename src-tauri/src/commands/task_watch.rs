@@ -325,29 +325,40 @@ pub fn write_task_frontmatter(
         f.sync_all()
             .map_err(|e| format!("sync tmp: {e}"))?;
     }
-    // Atomic replace. `std::fs::rename` is atomic on POSIX and will
-    // overwrite the destination. On Windows it fails when the
-    // destination already exists — Codex 2026-04-21 pre-push flagged
-    // this as a portability bug. Until Rust's `std::fs::rename` gains
-    // Windows replace-semantics (blocked on upstream), fall through
-    // to an explicit remove+rename on that platform. Still atomic
-    // from the writer's perspective because the write already
-    // completed to tmp; the window between remove and rename is only
-    // visible to readers who happen to stat mid-replace, and our
-    // readers (notify watcher) tolerate the transient absence.
-    #[cfg(unix)]
-    {
-        std::fs::rename(&tmp, &target)
-            .map_err(|e| format!("rename tmp→target: {e}"))?;
-    }
-    #[cfg(not(unix))]
-    {
-        if target.exists() {
-            std::fs::remove_file(&target)
-                .map_err(|e| format!("pre-rename remove: {e}"))?;
+    // Atomic replace. `std::fs::rename` overwrites the destination
+    // atomically on POSIX, and on Windows 10+ with modern Rust it
+    // also uses MoveFileEx(REPLACE_EXISTING). If replace-rename ever
+    // fails (legacy FS, AV lock, cross-device), do a safe swap:
+    // move the existing file to a backup first, rename tmp into
+    // place, delete the backup on success. On failure, restore the
+    // backup so we NEVER lose the original — Codex 2026-04-21
+    // pre-push caught an earlier attempt that deleted target before
+    // confirming the new file was installed.
+    match std::fs::rename(&tmp, &target) {
+        Ok(()) => {}
+        Err(_) if target.exists() => {
+            let backup = target.with_extension("md.bak");
+            std::fs::rename(&target, &backup)
+                .map_err(|e| format!("backup existing: {e}"))?;
+            match std::fs::rename(&tmp, &target) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&backup);
+                }
+                Err(e) => {
+                    // Restore the original — the new file never
+                    // landed, but the old one must not be lost.
+                    let _ = std::fs::rename(&backup, &target);
+                    return Err(format!(
+                        "rename tmp→target failed after backup: {e}"
+                    ));
+                }
+            }
         }
-        std::fs::rename(&tmp, &target)
-            .map_err(|e| format!("rename tmp→target: {e}"))?;
+        Err(e) => {
+            // Target didn't exist (new file case) and rename still
+            // failed — cross-device, permissions, etc.
+            return Err(format!("rename tmp→target: {e}"));
+        }
     }
 
     // Post-write verification: file exists, non-zero size, parses.
