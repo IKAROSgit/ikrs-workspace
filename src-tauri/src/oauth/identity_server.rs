@@ -34,20 +34,45 @@ pub fn generate_random_b64(byte_len: usize) -> String {
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 
-fn bind_with_fallback(preferred_port: u16) -> impl std::future::Future<Output = Result<(TcpListener, u16), String>> {
-    async move {
-        for port in preferred_port..=preferred_port + 10 {
-            match TcpListener::bind(format!("127.0.0.1:{port}")).await {
-                Ok(listener) => return Ok((listener, port)),
-                Err(_) => continue,
-            }
+/// Dual-stack bind (IPv4 + IPv6) for the Firebase identity callback.
+///
+/// On macOS, `localhost` resolves to `::1` (IPv6) BEFORE `127.0.0.1`.
+/// Google's OAuth redirects the user's browser to
+/// `http://localhost:{port}/oauth/callback` — the browser picks
+/// `::1` first. If this server only binds IPv4, the browser tries
+/// to connect to `[::1]:{port}`, which is either (a) held by an
+/// unrelated process like `rapportd` (Apple's AirDrop/Handoff
+/// daemon) that listens on the IPv6 wildcard, or (b) nothing — in
+/// which case the callback never reaches us. The Rust task waits
+/// on its IPv4 listener until the 310 s timeout, the frontend
+/// shows a "Complete the sign-in…" banner that never resolves, and
+/// the consultant perceives "the button does nothing".
+///
+/// This was the exact root cause of the 2026-04-22 auth regression.
+/// `redirect_server.rs` got the dual-stack fix in commit 78f807a
+/// for the engagement-OAuth flow; this module was missed and still
+/// bound IPv4-only. Now both modules share the same pattern: bind
+/// both stacks when possible, accept from whichever the browser
+/// hits first via `tokio::select!`.
+async fn bind_with_fallback(
+    preferred_port: u16,
+) -> Result<(TcpListener, Option<TcpListener>, u16), String> {
+    for port in preferred_port..=preferred_port + 10 {
+        // Primary: IPv6 loopback (what macOS browsers prefer).
+        let v6 = TcpListener::bind(format!("[::1]:{port}")).await;
+        let v4 = TcpListener::bind(format!("127.0.0.1:{port}")).await;
+        match (v6, v4) {
+            (Ok(v6), Ok(v4)) => return Ok((v6, Some(v4), port)),
+            (Ok(v6), Err(_)) => return Ok((v6, None, port)),
+            (Err(_), Ok(v4)) => return Ok((v4, None, port)),
+            (Err(_), Err(_)) => continue,
         }
-        Err(format!(
-            "Could not bind to any port in range {}-{} for Firebase identity callback",
-            preferred_port,
-            preferred_port + 10
-        ))
     }
+    Err(format!(
+        "Could not bind to any port in range {}-{} for Firebase identity callback",
+        preferred_port,
+        preferred_port + 10
+    ))
 }
 
 struct CallbackParams {
@@ -129,7 +154,7 @@ pub async fn start_identity_redirect_server(
         return Err("expected_state must not be empty".to_string());
     }
 
-    let (listener, actual_port) = bind_with_fallback(preferred_port).await?;
+    let (primary, secondary, actual_port) = bind_with_fallback(preferred_port).await?;
 
     let handle = tokio::spawn(async move {
         let app_for_error = app.clone();
@@ -147,11 +172,29 @@ pub async fn start_identity_redirect_server(
         // if the frontend's 5-minute setTimeout is somehow suspended
         // (tab backgrounded, system sleep). 310 s = frontend 5 min +
         // 10 s grace.
+        //
+        // Accept from whichever stack the browser hits first. When
+        // `secondary` is None, only one stack is bound and we accept
+        // on it alone. Mirrors redirect_server.rs pattern.
+        let accept_future = async {
+            match secondary {
+                None => primary
+                    .accept()
+                    .await
+                    .map_err(|e| format!("Accept failed: {e}")),
+                Some(secondary) => {
+                    tokio::select! {
+                        r = primary.accept() => r.map_err(|e| format!("Accept v6 failed: {e}")),
+                        r = secondary.accept() => r.map_err(|e| format!("Accept v4 failed: {e}")),
+                    }
+                }
+            }
+        };
         let accept_result =
-            tokio::time::timeout(std::time::Duration::from_secs(310), listener.accept()).await;
+            tokio::time::timeout(std::time::Duration::from_secs(310), accept_future).await;
         let (mut stream, _addr) = match accept_result {
             Ok(Ok(ok)) => ok,
-            Ok(Err(e)) => return fail(format!("Accept failed: {e}")).await,
+            Ok(Err(e)) => return fail(e).await,
             Err(_) => {
                 return fail(
                     "Sign-in listener timed out after 310 s waiting for Google callback"
@@ -328,5 +371,64 @@ mod tests {
         assert_ne!(a, b);
         // base64 URL-safe no-pad length for 32 bytes is 43
         assert_eq!(a.len(), 43);
+    }
+
+    /// Regression guard for the 2026-04-22 auth bug: identity_server
+    /// must bind IPv6 (::1) whenever the OS supports it, because
+    /// macOS resolves `localhost` to `::1` first. A future refactor
+    /// that silently drops the IPv6 bind would reproduce the bug.
+    /// This test asks bind_with_fallback to pick an available port
+    /// and verifies that at least one listener is IPv6-capable.
+    #[tokio::test]
+    async fn bind_with_fallback_produces_ipv6_listener_when_available() {
+        // Pick a high random port unlikely to collide with parallel
+        // test runs or system services. Fallback range spans +10.
+        let pref = 54321_u16;
+        let (primary, secondary, _port) = bind_with_fallback(pref)
+            .await
+            .expect("bind should succeed on a free port");
+
+        // At least one of the two listeners must be IPv6. If the OS
+        // genuinely has no IPv6 loopback, this test will skip that
+        // branch — but on any mainstream macOS/Linux/Windows CI
+        // runner, ::1 is available and must be bound.
+        let primary_is_v6 = primary
+            .local_addr()
+            .map(|a| a.is_ipv6())
+            .unwrap_or(false);
+        let secondary_is_v6 = secondary
+            .as_ref()
+            .and_then(|s| s.local_addr().ok())
+            .map(|a| a.is_ipv6())
+            .unwrap_or(false);
+        assert!(
+            primary_is_v6 || secondary_is_v6,
+            "bind_with_fallback must produce at least one IPv6 listener on a dual-stack host"
+        );
+    }
+
+    /// The fallback range is 10 ports wide; if all 11 are taken, we
+    /// return Err rather than hang. This test pre-binds the entire
+    /// range and asserts the Err.
+    #[tokio::test]
+    async fn bind_with_fallback_errors_when_range_exhausted() {
+        let start = 54500_u16;
+        // Hold 11 ports (preferred + 10 fallbacks) on both stacks
+        // so bind_with_fallback can't get any of them.
+        let mut holders = Vec::new();
+        for p in start..=start + 10 {
+            if let Ok(l) = TcpListener::bind(format!("[::1]:{p}")).await {
+                holders.push(l);
+            }
+            if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{p}")).await {
+                holders.push(l);
+            }
+        }
+        let got = bind_with_fallback(start).await;
+        drop(holders);
+        assert!(
+            got.is_err(),
+            "expected bind_with_fallback to Err when range is exhausted"
+        );
     }
 }
