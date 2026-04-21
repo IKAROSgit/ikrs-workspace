@@ -249,7 +249,13 @@ pub async fn distill(
         .arg(&prompt)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // Codex 2026-04-21 pre-push: without kill_on_drop, a
+        // timed-out `claude -p` child survives after we drop the
+        // wait future — orphan processes accumulate under repeated
+        // hangs. Setting this makes tokio kill the child when the
+        // Child handle is dropped, including on timeout-exit below.
+        .kill_on_drop(true);
 
     let mut child = cmd
         .spawn()
@@ -262,13 +268,53 @@ pub async fn distill(
         drop(stdin);
     }
 
-    let output = tokio::time::timeout(
+    // Belt-and-suspenders: explicit kill on timeout in addition to
+    // kill_on_drop, so we don't rely on the drop order to reap the
+    // child promptly. `wait_with_output` would consume `child`, so
+    // we split into wait() + manual stream reads to keep the handle
+    // available for kill().
+    use tokio::io::AsyncReadExt;
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let read_stdout = async {
+        if let Some(ref mut p) = stdout_pipe {
+            let _ = p.read_to_end(&mut stdout_buf).await;
+        }
+    };
+    let read_stderr = async {
+        if let Some(ref mut p) = stderr_pipe {
+            let _ = p.read_to_end(&mut stderr_buf).await;
+        }
+    };
+    let wait = child.wait();
+    let finished = tokio::time::timeout(
         std::time::Duration::from_secs(90),
-        child.wait_with_output(),
+        async { tokio::join!(wait, read_stdout, read_stderr) },
     )
-    .await
-    .map_err(|_| "distiller timed out after 90s".to_string())?
-    .map_err(|e| format!("distiller child failed: {e}"))?;
+    .await;
+    let status = match finished {
+        Ok((wait_res, _, _)) => wait_res.map_err(|e| format!("distiller child failed: {e}"))?,
+        Err(_) => {
+            // Explicitly kill the child on timeout. kill_on_drop is
+            // the safety net; this is the primary reap path.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err("distiller timed out after 90s".to_string());
+        }
+    };
+    #[derive(Debug)]
+    struct Output {
+        status: std::process::ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    }
+    let output = Output {
+        status,
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
