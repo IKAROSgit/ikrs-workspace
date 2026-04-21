@@ -85,14 +85,35 @@ fn default_assignee() -> String {
 /// Start watching `<vault>/02-tasks/` for this engagement. Replaces
 /// any previous watcher. Idempotent on repeat calls with the same
 /// engagement_id (no-ops).
+///
+/// `vault_path` is the ABSOLUTE path to the engagement's vault,
+/// taken from Firestore's `engagement.vault.path` field. The caller
+/// (useTaskVaultBridge) passes it explicitly so the watcher, the
+/// Obsidian MCP, and Claude's CLI cwd all watch/write the same
+/// folder. 2026-04-22 bug fix: before, this derived its own path
+/// from `client_slug` via `vault_path_for_slug(slug)` =
+/// `~/.ikrs-workspace/vaults/<slug>`, which diverged from
+/// engagement.vault.path for any engagement whose vault was set to
+/// a Drive-synced folder. Claude would write tasks to the Drive
+/// folder (its cwd) while the watcher silently stared at an empty
+/// `.ikrs-workspace/vaults/<slug>/02-tasks/`. Tasks never appeared.
+///
+/// `client_slug` is still accepted (backcompat / legacy fallback
+/// only) — if `vault_path` is empty, we fall back to the derived
+/// path so older engagements that never had vault.path populated
+/// still work.
 #[tauri::command]
 pub fn start_task_watch(
     engagement_id: String,
     client_slug: String,
+    vault_path: Option<String>,
     app: AppHandle,
     state: State<'_, TaskWatchState>,
 ) -> Result<(), String> {
-    let vault_root = vault_path_for_slug(&client_slug)?;
+    let vault_root = match vault_path.as_deref() {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => vault_path_for_slug(&client_slug)?,
+    };
     let tasks_dir = vault_root.join("02-tasks");
     if !tasks_dir.exists() {
         std::fs::create_dir_all(&tasks_dir)

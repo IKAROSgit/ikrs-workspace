@@ -43,14 +43,30 @@ pub async fn spawn_claude_session(
         );
     }
 
-    // 2. Resolve vault path and ensure directory exists (Codex C1 fix)
-    //    Only if client_slug is provided (engagements without clients skip MCP)
+    // 2. Resolve vault path and ensure directory exists (Codex C1 fix).
+    //    Only if client_slug is provided (engagements without clients skip MCP).
+    //
+    //    2026-04-22 bug fix: use `engagement_path` (Firestore's
+    //    `engagement.vault.path`, same as Claude CLI's cwd) as the
+    //    vault root for Obsidian MCP, scaffolder, daily-note, and
+    //    settings backfill. Falls back to the legacy
+    //    `~/.ikrs-workspace/vaults/<slug>` derivation only when
+    //    engagement_path is empty (shouldn't happen for engagements
+    //    created via the UI, but defensive for legacy records).
+    //    Without this, Claude's file writes (relative to cwd =
+    //    engagement_path) went to the Drive-synced vault while the
+    //    Obsidian MCP / task watcher stared at the local
+    //    .ikrs-workspace/ path — zero files would overlap.
     if let Some(ref slug) = client_slug {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let vault_path = std::path::PathBuf::from(&home)
-            .join(".ikrs-workspace")
-            .join("vaults")
-            .join(slug);
+        let vault_path = if !engagement_path.trim().is_empty() {
+            std::path::PathBuf::from(&engagement_path)
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            std::path::PathBuf::from(&home)
+                .join(".ikrs-workspace")
+                .join("vaults")
+                .join(slug)
+        };
         if !vault_path.exists() {
             if let Err(e) = std::fs::create_dir_all(&vault_path) {
                 log::warn!("Failed to create vault dir {}: {e}", vault_path.display());

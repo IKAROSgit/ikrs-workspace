@@ -89,13 +89,22 @@ function isWithinLocalWindow(taskId: string): boolean {
  */
 export function useTaskVaultBridge() {
   const activeEngagementId = useEngagementStore((s) => s.activeEngagementId);
-  // Derive clientSlug via primitive string identity so effect deps
-  // don't churn when unrelated engagement fields (notesCount on a
-  // task, etc.) update the engagement list reference.
+  // Derive clientSlug + vaultPath via primitive string identity so
+  // effect deps don't churn when unrelated engagement fields
+  // (notesCount on a task, etc.) update the engagement list
+  // reference.
   const clientSlug = useEngagementStore((s) => {
     const eng = s.engagements.find((e) => e.id === s.activeEngagementId);
     if (!eng) return null;
     return s.clients.find((c) => c.id === eng.clientId)?.slug ?? null;
+  });
+  // 2026-04-22 bug fix: pass the authoritative vault path (same one
+  // Claude's CLI has as cwd) so the watcher looks where files are
+  // actually written. Without this, engagements with Drive-synced
+  // vault.path values silently dropped every Claude-authored task.
+  const vaultPath = useEngagementStore((s) => {
+    const eng = s.engagements.find((e) => e.id === s.activeEngagementId);
+    return eng?.vault.path ?? null;
   });
 
   // Resolve engagement default-client-visibility lazily through a
@@ -124,6 +133,7 @@ export function useTaskVaultBridge() {
         await invoke("start_task_watch", {
           engagementId: activeEngagementId,
           clientSlug,
+          vaultPath: vaultPath ?? null,
         });
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -252,7 +262,7 @@ export function useTaskVaultBridge() {
     // here; that reference changes on every Firestore write to the
     // engagements collection and would restart the notify watcher
     // (dropping in-flight events). Codex 2026-04-21 pre-push fix.
-  }, [activeEngagementId, clientSlug]);
+  }, [activeEngagementId, clientSlug, vaultPath]);
 }
 
 /** Monotonic sort-order generator. `Date.now()` alone collides when
