@@ -130,6 +130,17 @@ export function useTaskVaultBridge() {
 
     const setup = async () => {
       try {
+        // Pass the configured vault path to BOTH the watcher
+        // (here) and `write_task_frontmatter` (in useTasks). Both
+        // Rust commands accept `vault_path?: string` and fall back
+        // to the slug-derived default when null — which is Moe's
+        // case today. For future engagements whose vault.path
+        // points at a Drive-synced folder, the same value reaches
+        // both surfaces, so watcher and writer stay on the same
+        // folder. Codex 2026-04-22 double-flag resolution: the
+        // prior forced-null hotfix would have broken Drive-synced
+        // engagements; routing vaultPath to both callers fixes
+        // the original split without reintroducing that split.
         await invoke("start_task_watch", {
           engagementId: activeEngagementId,
           clientSlug,

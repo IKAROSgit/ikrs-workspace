@@ -43,29 +43,39 @@ pub async fn spawn_claude_session(
         );
     }
 
-    // 2. Resolve vault path and ensure directory exists (Codex C1 fix).
+    // 2. Resolve vault path and ensure directory exists.
     //    Only if client_slug is provided (engagements without clients skip MCP).
     //
-    //    2026-04-22 bug fix: use `engagement_path` (Firestore's
-    //    `engagement.vault.path`, same as Claude CLI's cwd) as the
-    //    vault root for Obsidian MCP, scaffolder, daily-note, and
-    //    settings backfill. Falls back to the legacy
-    //    `~/.ikrs-workspace/vaults/<slug>` derivation only when
-    //    engagement_path is empty (shouldn't happen for engagements
-    //    created via the UI, but defensive for legacy records).
-    //    Without this, Claude's file writes (relative to cwd =
-    //    engagement_path) went to the Drive-synced vault while the
-    //    Obsidian MCP / task watcher stared at the local
-    //    .ikrs-workspace/ path — zero files would overlap.
+    //    Path unification (2026-04-22 iteration after Codex review
+    //    loop): ALL surfaces — Claude CLI cwd, Obsidian MCP vault,
+    //    scaffolder target, daily-note target, settings backfill,
+    //    task watcher, write_task_frontmatter — use `engagement_path`
+    //    (Firestore's `engagement.vault.path`). For Moe's current
+    //    engagements, engagement_path == `~/.ikrs-workspace/vaults/
+    //    <slug>/` so this is observationally identical to the older
+    //    slug-derived default. For future engagements whose vault
+    //    is genuinely configured elsewhere (Drive-synced folder),
+    //    all surfaces agree on THAT folder too — no writer/watcher
+    //    split, no MCP-vs-Claude-cwd split.
+    //
+    //    Scaffolder + daily-note still run synchronously here; if
+    //    engagement_path ever resolves to a pathologically slow
+    //    filesystem (iCloud throttled, network drive unavailable),
+    //    spawn_claude_session can block. Mitigated by the fact that
+    //    today's callers pass a local path. Proper async wrapping
+    //    of scaffold/daily-note is a follow-up when we actually
+    //    onboard a Drive-synced engagement.
     if let Some(ref slug) = client_slug {
         let vault_path = if !engagement_path.trim().is_empty() {
             std::path::PathBuf::from(&engagement_path)
         } else {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            std::path::PathBuf::from(&home)
-                .join(".ikrs-workspace")
-                .join("vaults")
-                .join(slug)
+            crate::commands::vault::vault_path_for_slug(slug).unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                std::path::PathBuf::from(&home)
+                    .join(".ikrs-workspace")
+                    .join("vaults")
+                    .join(slug)
+            })
         };
         if !vault_path.exists() {
             if let Err(e) = std::fs::create_dir_all(&vault_path) {

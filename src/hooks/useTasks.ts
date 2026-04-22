@@ -90,6 +90,16 @@ export function useTasks() {
     return clients.find((c) => c.id === eng.clientId)?.slug ?? null;
   }, [activeEngagementId, engagements, clients]);
 
+  /** Resolve the engagement's configured vault.path. Passed to both
+   *  `write_task_frontmatter` and `start_task_watch` so they stay on
+   *  the SAME folder even when an engagement's vault lives outside
+   *  the slug-derived default (e.g. Drive-synced vaults). If absent,
+   *  both Rust commands fall back to `~/.ikrs-workspace/vaults/<slug>/`. */
+  const resolveVaultPath = useCallback((): string | null => {
+    const eng = engagements.find((e) => e.id === activeEngagementId);
+    return eng?.vault.path ?? null;
+  }, [activeEngagementId, engagements]);
+
   /** Fire-and-forget vault-mirror of a task edit. Safe to call from
    *  any UI action — if the vault file doesn't exist yet this
    *  creates it; if it does, existing note body is preserved
@@ -113,6 +123,7 @@ export function useTasks() {
     ): Promise<void> => {
       const slug = resolveClientSlug();
       if (!slug) return Promise.resolve();
+      const vaultPath = resolveVaultPath();
       // Mark pending OUTSIDE the queue so the 2s anti-flicker window
       // starts at mutation time (not at eventual write time). This
       // matters when multiple writes are queued — all of their
@@ -125,6 +136,7 @@ export function useTasks() {
         try {
           await invoke("write_task_frontmatter", {
             clientSlug: slug,
+            vaultPath,
             patch: { id: taskId, ...patch },
           });
         } catch (e) {
@@ -133,7 +145,7 @@ export function useTasks() {
         }
       });
     },
-    [resolveClientSlug],
+    [resolveClientSlug, resolveVaultPath],
   );
 
   const addTask = useCallback(

@@ -99,22 +99,18 @@ fn default_assignee() -> String {
 /// any previous watcher. Idempotent on repeat calls with the same
 /// engagement_id (no-ops).
 ///
-/// `vault_path` is the ABSOLUTE path to the engagement's vault,
-/// taken from Firestore's `engagement.vault.path` field. The caller
-/// (useTaskVaultBridge) passes it explicitly so the watcher, the
-/// Obsidian MCP, and Claude's CLI cwd all watch/write the same
-/// folder. 2026-04-22 bug fix: before, this derived its own path
-/// from `client_slug` via `vault_path_for_slug(slug)` =
-/// `~/.ikrs-workspace/vaults/<slug>`, which diverged from
-/// engagement.vault.path for any engagement whose vault was set to
-/// a Drive-synced folder. Claude would write tasks to the Drive
-/// folder (its cwd) while the watcher silently stared at an empty
-/// `.ikrs-workspace/vaults/<slug>/02-tasks/`. Tasks never appeared.
+/// **Default path derivation**: `~/.ikrs-workspace/vaults/<slug>/`
+/// via `vault_path_for_slug(slug)`. This matches where
+/// `write_task_frontmatter` writes — so UI-edits and Claude-writes
+/// land in the same folder the watcher watches. Symmetry preserved.
 ///
-/// `client_slug` is still accepted (backcompat / legacy fallback
-/// only) — if `vault_path` is empty, we fall back to the derived
-/// path so older engagements that never had vault.path populated
-/// still work.
+/// `vault_path` is an OPTIONAL override. When explicitly passed
+/// (non-empty), we watch that path instead. Kept as an escape
+/// hatch for future engagements that deliberately want a Drive-
+/// synced vault. For now the frontend omits it — Codex 2026-04-22
+/// flagged a writer/watcher split when vault_path differed from
+/// the slug-derived default, so we default to the slug path until
+/// write_task_frontmatter also honours vault_path.
 #[tauri::command]
 pub fn start_task_watch(
     engagement_id: String,
@@ -388,6 +384,7 @@ pub struct TaskFrontmatterPatch {
 #[tauri::command]
 pub fn write_task_frontmatter(
     client_slug: String,
+    vault_path: Option<String>,
     patch: TaskFrontmatterPatch,
 ) -> Result<(), String> {
     use crate::commands::vault::vault_path_for_slug;
@@ -407,7 +404,16 @@ pub fn write_task_frontmatter(
         return Err("invalid task id".to_string());
     }
 
-    let vault_root = vault_path_for_slug(&client_slug)?;
+    // Accept optional `vault_path` override (mirrors start_task_watch
+    // 2026-04-22 hotfix). When present, write to <vault_path>/02-tasks;
+    // otherwise fall back to slug-derived default. Keeps writer and
+    // watcher pointed at the same folder for ALL engagements, whether
+    // vault.path happens to equal the slug default (Moe's BLR today)
+    // or a future engagement with a Drive-synced path.
+    let vault_root = match vault_path.as_deref() {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => vault_path_for_slug(&client_slug)?,
+    };
     let tasks_dir = vault_root.join("02-tasks");
     std::fs::create_dir_all(&tasks_dir)
         .map_err(|e| format!("create 02-tasks: {e}"))?;
@@ -805,7 +811,7 @@ body"#;
             status: Some("in_progress".to_string()),
             ..Default::default()
         };
-        write_task_frontmatter(slug.clone(), patch).unwrap();
+        write_task_frontmatter(slug.clone(), None, patch).unwrap();
 
         let result = std::fs::read_to_string(&target).unwrap();
         // Body must be present verbatim.
@@ -829,25 +835,25 @@ body"#;
             id: "../evil".to_string(),
             ..Default::default()
         };
-        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+        assert!(write_task_frontmatter("slug".to_string(), None, patch).is_err());
 
         let patch = TaskFrontmatterPatch {
             id: "a/b".to_string(),
             ..Default::default()
         };
-        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+        assert!(write_task_frontmatter("slug".to_string(), None, patch).is_err());
 
         let patch = TaskFrontmatterPatch {
             id: String::new(),
             ..Default::default()
         };
-        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+        assert!(write_task_frontmatter("slug".to_string(), None, patch).is_err());
 
         let patch = TaskFrontmatterPatch {
             id: "null\0byte".to_string(),
             ..Default::default()
         };
-        assert!(write_task_frontmatter("slug".to_string(), patch).is_err());
+        assert!(write_task_frontmatter("slug".to_string(), None, patch).is_err());
     }
 
     #[test]
@@ -861,7 +867,7 @@ body"#;
             status: Some("backlog".to_string()),
             ..Default::default()
         };
-        write_task_frontmatter(slug.clone(), patch).unwrap();
+        write_task_frontmatter(slug.clone(), None, patch).unwrap();
         let target = vaults
             .join(&slug)
             .join("02-tasks")
