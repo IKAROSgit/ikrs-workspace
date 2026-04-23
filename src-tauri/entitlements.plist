@@ -2,17 +2,42 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.network.server</key>
-    <true/>
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <!--
+        IKAROS Workspace entitlements.
+
+        2026-04-23: Removed `com.apple.security.app-sandbox`. The app
+        is a consultant's professional workspace distributed direct-
+        to-consultant (not via App Store), and it legitimately needs:
+          - Subprocess exec of `claude`, `npx`, `which` (for the
+            binary resolver)
+          - Reads outside the app container (user's vault at
+            `~/.ikrs-workspace/vaults/`, node_modules discovery,
+            nvm paths for MCP servers)
+          - Writes to the user's real home for per-engagement vaults
+
+        Under app-sandbox all of the above requires a specific
+        temporary-exception entitlement. Moe saw:
+          - "Claude CLI not found" — binary_resolver blocked from
+            spawning `which` and reading `~/.nvm/...`
+          - "Failed to create MCP tmp file at 0600: EPERM" —
+            mcp_config blocked from writing to engagement's vault
+          - "Path outside allowed vault directory" — skills
+            validator saw a canonical path outside the sandbox's
+            idea of the container
+        All three are resolved by dropping app-sandbox.
+
+        Hardened Runtime (required for future notarization) is
+        independent of sandbox — the cs.* opt-outs below handle it.
+    -->
+
+    <!-- Hardened Runtime opt-outs that Tauri + WebKit need. -->
+    <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 </dict>
 </plist>

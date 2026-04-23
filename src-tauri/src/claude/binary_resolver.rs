@@ -59,6 +59,16 @@ fn resolve_claude(home: &PathBuf) -> Option<PathBuf> {
         // custom prefix).
         home.join(".npm-global/bin/claude"),
         home.join(".volta/bin/claude"),
+        // Bun global (2026-04-23: added after Moe's Mac failed to
+        // find claude — he may have installed via bun).
+        home.join(".bun/bin/claude"),
+        // Yarn global (same rationale).
+        home.join(".yarn/bin/claude"),
+        // pnpm global (same rationale).
+        home.join(".pnpm/bin/claude"),
+        home.join("Library/pnpm/claude"),
+        // Apple Silicon framework-installed Node.js.
+        PathBuf::from("/Library/Frameworks/Node.framework/Versions/Current/bin/claude"),
     ];
     // nvm puts a per-node-version claude under each version's bin.
     let nvm_pattern = home.join(".nvm/versions/node/*/bin/claude");
@@ -68,6 +78,17 @@ fn resolve_claude(home: &PathBuf) -> Option<PathBuf> {
         nvm_paths.reverse();
         candidates.extend(nvm_paths);
     }
+    // fnm (Fast Node Manager) — increasingly common on macOS.
+    let fnm_pattern = home.join(".local/state/fnm_multishells/*/bin/claude");
+    if let Ok(paths) = glob::glob(&fnm_pattern.to_string_lossy()) {
+        let mut fnm_paths: Vec<PathBuf> = paths.filter_map(|p| p.ok()).collect();
+        fnm_paths.sort();
+        fnm_paths.reverse();
+        candidates.extend(fnm_paths);
+    }
+    let fnm_alt = home.join(".fnm/aliases/default/bin/claude");
+    candidates.push(fnm_alt);
+
     resolve_binary("claude", &candidates)
 }
 
@@ -107,26 +128,62 @@ fn resolve_node(home: &PathBuf) -> Option<PathBuf> {
 /// Try `which` first (captures user's current PATH), then fall back to known paths.
 /// Note: `which` does not exist on Windows (equivalent is `where.exe`). The `Command::new("which")`
 /// call gracefully returns Err on Windows, falling through to candidate path checks.
+///
+/// 2026-04-23: emits `log::info!` on success and `log::warn!` with the
+/// full candidate list on failure. Previously a silent `None` gave
+/// Moe zero signal about why the resolver couldn't find claude on
+/// his Mac. Log shows up in /tmp/ikrs-stream.log + Console.app.
 fn resolve_binary(name: &str, candidates: &[PathBuf]) -> Option<PathBuf> {
     // Try `which` first (Unix only; gracefully fails on Windows)
-    if let Ok(output) = Command::new("which").arg(name).output() {
-        if output.status.success() {
+    match Command::new("which").arg(name).output() {
+        Ok(output) if output.status.success() => {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
                 let p = PathBuf::from(&path);
                 if p.exists() {
+                    log::info!("[binary_resolver] {name} resolved via `which` → {}", p.display());
                     return Some(p);
+                } else {
+                    log::warn!(
+                        "[binary_resolver] `which {name}` returned {path:?} but file does not exist"
+                    );
                 }
             }
+        }
+        Ok(output) => {
+            log::debug!(
+                "[binary_resolver] `which {name}` exited with status {:?}",
+                output.status.code()
+            );
+        }
+        Err(e) => {
+            log::debug!("[binary_resolver] `which {name}` failed to spawn: {e}");
         }
     }
 
     // Fall back to known candidate paths
     for candidate in candidates {
         if candidate.exists() {
+            log::info!(
+                "[binary_resolver] {name} resolved via candidate → {}",
+                candidate.display()
+            );
             return Some(candidate.clone());
         }
     }
+
+    log::warn!(
+        "[binary_resolver] {name} NOT FOUND. Tried `which {name}` + {} candidate paths:",
+        candidates.len()
+    );
+    for c in candidates {
+        log::warn!("[binary_resolver]   candidate: {} (exists={})", c.display(), c.exists());
+    }
+    log::warn!(
+        "[binary_resolver] If {name} is installed elsewhere, add the path to \
+         src-tauri/src/claude/binary_resolver.rs::resolve_{name} or file an issue with \
+         the output of `which {name}` on your Mac."
+    );
 
     None
 }
