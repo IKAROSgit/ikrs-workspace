@@ -280,7 +280,7 @@ function renderBriefing(p: {
   // Marker + framing so Claude treats this as context, not a user
   // request. The marker lets future debuggers grep the CLI stdin log
   // for these turns.
-  parts.push("<<BRIEFING v1>>");
+  parts.push("<<BRIEFING v2>>");
   parts.push(
     `You're opening a fresh session with me (the consultant). ` +
       `Below is my current-state snapshot for ${dateLabel}. ` +
@@ -289,6 +289,57 @@ function renderBriefing(p: {
       `question if there's a real decision to make. Keep your ` +
       `opening under ~120 words. Don't echo the briefing back to me; ` +
       `just act on it.`,
+  );
+  parts.push("");
+
+  // How the Kanban ingests tasks — inlined in every session so Claude
+  // never has to discover this from CLAUDE.md, filesystem recon, or
+  // user re-explanation. 2026-04-23: Moe's previous session had Claude
+  // write tasks into the daily note (which the Kanban doesn't read)
+  // instead of individual `02-tasks/<id>.md` files (which it does),
+  // because Claude didn't know the app's ingestion contract.
+  parts.push("## How to populate the Kanban (VERY IMPORTANT)");
+  parts.push(
+    "The app's Kanban view is wired to `02-tasks/`. It reads ONE markdown " +
+      "file per task. The daily note, a tracker file, or any other " +
+      "consolidated list will NOT appear on the Kanban — only individual " +
+      "frontmatter-fronted files in `02-tasks/`.",
+  );
+  parts.push("");
+  parts.push("When I ask you to populate, import, or add tasks, do THIS:");
+  parts.push("");
+  parts.push(
+    "1. Use your `Write` tool (not `TodoWrite` — that's your internal " +
+      "in-session tool and doesn't affect my Kanban).",
+  );
+  parts.push("2. One file per task, written serially not in parallel.");
+  parts.push("3. Path: `02-tasks/<id>.md` — short lowercase-hyphenated slug for `<id>`.");
+  parts.push("4. Required frontmatter:");
+  parts.push("");
+  parts.push("```markdown");
+  parts.push("---");
+  parts.push("id: t-p1-001-example-slug");
+  parts.push("title: Short imperative title");
+  parts.push("status: in_progress");
+  parts.push("priority: p1");
+  parts.push("tags: []");
+  parts.push("due: 2026-04-28");
+  parts.push("client_visible: false");
+  parts.push("description: one-line context");
+  parts.push("assignee: consultant");
+  parts.push("---");
+  parts.push("");
+  parts.push("Optional long-form notes go below the frontmatter.");
+  parts.push("```");
+  parts.push("");
+  parts.push(
+    "Valid `status`: `backlog` · `in_progress` · `awaiting_client` · " +
+      "`blocked` · `in_review` · `done`.",
+  );
+  parts.push("Valid `priority`: `p1` · `p2` · `p3`.");
+  parts.push(
+    "Always set `assignee: consultant` explicitly. The system default " +
+      "is `claude`, which is usually wrong for tasks I'll actually work on.",
   );
   parts.push("");
   parts.push("---");
