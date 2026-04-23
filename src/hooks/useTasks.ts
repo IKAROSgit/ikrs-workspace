@@ -90,15 +90,10 @@ export function useTasks() {
     return clients.find((c) => c.id === eng.clientId)?.slug ?? null;
   }, [activeEngagementId, engagements, clients]);
 
-  /** Resolve the engagement's configured vault.path. Passed to both
-   *  `write_task_frontmatter` and `start_task_watch` so they stay on
-   *  the SAME folder even when an engagement's vault lives outside
-   *  the slug-derived default (e.g. Drive-synced vaults). If absent,
-   *  both Rust commands fall back to `~/.ikrs-workspace/vaults/<slug>/`. */
-  const resolveVaultPath = useCallback((): string | null => {
-    const eng = engagements.find((e) => e.id === activeEngagementId);
-    return eng?.vault.path ?? null;
-  }, [activeEngagementId, engagements]);
+  // resolveVaultPath removed 2026-04-23 — reverted to passing null
+  // for `vault_path` in Rust commands, letting them default to the
+  // slug-derived path. Custom vault paths are deferred until we
+  // actually onboard an engagement that uses one.
 
   /** Fire-and-forget vault-mirror of a task edit. Safe to call from
    *  any UI action — if the vault file doesn't exist yet this
@@ -123,7 +118,6 @@ export function useTasks() {
     ): Promise<void> => {
       const slug = resolveClientSlug();
       if (!slug) return Promise.resolve();
-      const vaultPath = resolveVaultPath();
       // Mark pending OUTSIDE the queue so the 2s anti-flicker window
       // starts at mutation time (not at eventual write time). This
       // matters when multiple writes are queued — all of their
@@ -132,11 +126,15 @@ export function useTasks() {
       // Per-task serialization — writes on the same taskId run in
       // the order they were enqueued, so a fast title+status pair
       // can't interleave and lose one field.
+      //
+      // 2026-04-23: not passing vaultPath so Rust uses slug-derived
+      // default, matching start_task_watch. Deferred until a future
+      // engagement actually uses a non-default vault path.
       return enqueueVaultMirror(taskId, async () => {
         try {
           await invoke("write_task_frontmatter", {
             clientSlug: slug,
-            vaultPath,
+            vaultPath: null,
             patch: { id: taskId, ...patch },
           });
         } catch (e) {
@@ -145,7 +143,7 @@ export function useTasks() {
         }
       });
     },
-    [resolveClientSlug, resolveVaultPath],
+    [resolveClientSlug],
   );
 
   const addTask = useCallback(

@@ -223,29 +223,45 @@ pub fn start_task_watch(
         .map_err(|e| format!("notify watch {tasks_dir:?}: {e}"))?;
 
     // Initial scan: emit synthetic task:vault-change events for
-    // every existing .md file in 02-tasks/. 2026-04-22 fix —
-    // `notify` fires only on filesystem changes, so a watcher
-    // started after files were written (legacy imports, tasks
-    // created while the watcher was looking at the wrong path,
-    // etc.) would never sync them to Firestore. The scan runs
-    // off-thread so start_task_watch still returns promptly, and
-    // its JoinHandle lives on ActiveWatcher so replace/stop can
-    // abort a still-running scan (Codex 2026-04-22 P2: otherwise a
-    // long scan for engagement A would keep emitting after the
-    // user switched to engagement B).
-    let scan_app = app.clone();
-    let scan_tasks_dir = tasks_dir.clone();
-    let scan_engagement_id = engagement_id.clone();
-    let scan_handle = tokio::spawn(async move {
-        emit_initial_scan(&scan_app, &scan_tasks_dir, &scan_engagement_id).await;
-    });
+    // every existing .md file in 02-tasks/. `notify` fires only on
+    // filesystem changes, so a watcher started after files were
+    // written (legacy imports, etc.) would never sync them.
+    //
+    // 2026-04-23 crash fix: `start_task_watch` is a synchronous
+    // Tauri command, so it doesn't always execute inside a tokio
+    // runtime context. Calling `tokio::spawn` unconditionally
+    // panicked with "there is no reactor running in this context"
+    // which aborted the whole app the moment the user opened the
+    // tasks tab. Now we try to get the current tokio Handle — if
+    // one exists, we spawn onto it; otherwise we skip the scan
+    // (the watcher still runs on filesystem events). Skipping
+    // initial sync is strictly better than crashing; users can
+    // `touch <file>` or edit-and-save to trigger a real notify
+    // event if they really need to re-sync a stale vault.
+    let scan_handle = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let scan_app = app.clone();
+            let scan_tasks_dir = tasks_dir.clone();
+            let scan_engagement_id = engagement_id.clone();
+            Some(handle.spawn(async move {
+                emit_initial_scan(&scan_app, &scan_tasks_dir, &scan_engagement_id).await;
+            }))
+        }
+        Err(_) => {
+            log::warn!(
+                "start_task_watch: no tokio runtime in context — skipping initial scan. \
+                 Watcher will still fire on new filesystem events."
+            );
+            None
+        }
+    };
 
     let active = ActiveWatcher {
         engagement_id,
         tasks_dir,
         watcher,
         debounce,
-        scan_handle: Some(scan_handle),
+        scan_handle,
     };
     *state.0.lock().unwrap() = Some(active);
     Ok(())

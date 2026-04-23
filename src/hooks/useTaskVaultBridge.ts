@@ -130,21 +130,18 @@ export function useTaskVaultBridge() {
 
     const setup = async () => {
       try {
-        // Pass the configured vault path to BOTH the watcher
-        // (here) and `write_task_frontmatter` (in useTasks). Both
-        // Rust commands accept `vault_path?: string` and fall back
-        // to the slug-derived default when null — which is Moe's
-        // case today. For future engagements whose vault.path
-        // points at a Drive-synced folder, the same value reaches
-        // both surfaces, so watcher and writer stay on the same
-        // folder. Codex 2026-04-22 double-flag resolution: the
-        // prior forced-null hotfix would have broken Drive-synced
-        // engagements; routing vaultPath to both callers fixes
-        // the original split without reintroducing that split.
+        // 2026-04-23: pass `null` so Rust uses the slug-derived
+        // default (`~/.ikrs-workspace/vaults/<slug>/02-tasks/`).
+        // Symmetric with `write_task_frontmatter` which also
+        // defaults to slug-derived when vaultPath is null.
+        // Passing engagement.vault.path here was breaking sandbox
+        // fs-capability scope and the skills validator. Deferred
+        // until we actually onboard an engagement with a real
+        // Drive-synced vault path.
         await invoke("start_task_watch", {
           engagementId: activeEngagementId,
           clientSlug,
-          vaultPath: vaultPath ?? null,
+          vaultPath: null,
         });
       } catch (e) {
         // eslint-disable-next-line no-console

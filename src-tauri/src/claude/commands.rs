@@ -46,37 +46,36 @@ pub async fn spawn_claude_session(
     // 2. Resolve vault path and ensure directory exists.
     //    Only if client_slug is provided (engagements without clients skip MCP).
     //
-    //    Path unification (2026-04-22 iteration after Codex review
-    //    loop): ALL surfaces — Claude CLI cwd, Obsidian MCP vault,
-    //    scaffolder target, daily-note target, settings backfill,
-    //    task watcher, write_task_frontmatter — use `engagement_path`
-    //    (Firestore's `engagement.vault.path`). For Moe's current
-    //    engagements, engagement_path == `~/.ikrs-workspace/vaults/
-    //    <slug>/` so this is observationally identical to the older
-    //    slug-derived default. For future engagements whose vault
-    //    is genuinely configured elsewhere (Drive-synced folder),
-    //    all surfaces agree on THAT folder too — no writer/watcher
-    //    split, no MCP-vs-Claude-cwd split.
+    //    2026-04-23: reverted to slug-derived path for ALL surfaces
+    //    that write to the vault (scaffolder, Obsidian MCP config,
+    //    daily-note, settings backfill). This matches what
+    //    `vault_path_for_slug(slug)` produces — always
+    //    `~/.ikrs-workspace/vaults/<slug>/`. The prior engagement-
+    //    path-based unification triggered two real bugs on Moe's
+    //    Mac: (a) MCP tmp write failed with EPERM (path outside
+    //    app's fs capability scope), (b) skill-scaffolder rejected
+    //    the path with "Path outside allowed vault directory"
+    //    because `validate_engagement_path` in skills/mod.rs hard-
+    //    codes `~/.ikrs-workspace/vaults` as the only allowed base.
     //
-    //    Scaffolder + daily-note still run synchronously here; if
-    //    engagement_path ever resolves to a pathologically slow
-    //    filesystem (iCloud throttled, network drive unavailable),
-    //    spawn_claude_session can block. Mitigated by the fact that
-    //    today's callers pass a local path. Proper async wrapping
-    //    of scaffold/daily-note is a follow-up when we actually
-    //    onboard a Drive-synced engagement.
+    //    Claude CLI's cwd is still `engagement_path` (unchanged —
+    //    that's how the user chose to scope Claude's own file tools
+    //    for the engagement). Only vault-writing surfaces moved
+    //    back to slug-derived. Frontend also stops passing
+    //    `vaultPath` to the watcher / writer, so ALL six surfaces
+    //    converge on slug-derived. Codex's "non-default-vault-
+    //    path" concern becomes a deferred-but-documented edge case
+    //    for when a future engagement actually uses a Drive-synced
+    //    vault (today, none do).
     if let Some(ref slug) = client_slug {
-        let vault_path = if !engagement_path.trim().is_empty() {
-            std::path::PathBuf::from(&engagement_path)
-        } else {
-            crate::commands::vault::vault_path_for_slug(slug).unwrap_or_else(|_| {
+        let vault_path = crate::commands::vault::vault_path_for_slug(slug)
+            .unwrap_or_else(|_| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 std::path::PathBuf::from(&home)
                     .join(".ikrs-workspace")
                     .join("vaults")
                     .join(slug)
-            })
-        };
+            });
         if !vault_path.exists() {
             if let Err(e) = std::fs::create_dir_all(&vault_path) {
                 log::warn!("Failed to create vault dir {}: {e}", vault_path.display());
