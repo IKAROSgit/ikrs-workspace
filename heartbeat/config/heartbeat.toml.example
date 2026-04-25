@@ -1,0 +1,46 @@
+# IKAROS heartbeat configuration template.
+# Installed at /etc/ikrs-heartbeat/heartbeat.toml by scripts/install.sh.
+# Secrets (API keys, OAuth tokens) live in /etc/ikrs-heartbeat/secrets.env,
+# not here.
+
+# Required. Stable across the operator's career — used as Firestore key prefix
+# and audit log namespace.
+tenant_id = "moe-ikaros-ae"
+
+# Required. Per-engagement identifier — same value as engagement.id in the
+# Tauri app's engagement registry.
+engagement_id = "blr-world"
+
+# Required. Absolute path to the engagement vault on the VM. The installer
+# offers to clone the operator's vault from a private remote, or to create
+# an empty one.
+vault_root = "/home/ikrs/vaults/blr-world"
+
+# Optional. Defaults to "tick_prompt.v1". Bump when the prompt template
+# changes to keep telemetry comparable across versions.
+prompt_version = "tick_prompt.v1"
+
+# Optional. Defaults to "<vault_root>/_memory/heartbeat-log.jsonl".
+# Override only if you want the audit log outside the vault (rare).
+# audit_log_path = "/var/log/ikrs-heartbeat.jsonl"
+
+[llm]
+provider = "gemini"           # "gemini" (Tier II default) | "claude" (deferred to commercial)
+model = "gemini-2.5-pro"
+temperature = 0.2
+max_output_tokens = 4096
+
+[signals]
+calendar_enabled = true
+gmail_enabled = true
+vault_enabled = true
+calendar_lookahead_hours = 24  # scan next-24h events
+gmail_lookback_hours = 24      # scan last-24h unread/starred
+
+[outputs]
+firestore_enabled = true
+telegram_enabled = true
+audit_enabled = true
+# Required when firestore_enabled = true. Same Firebase project as the Tauri
+# app (single-project posture in v5; per-tenant projects deferred to Phase F).
+firestore_project_id = "ikrs-workspace-prod"

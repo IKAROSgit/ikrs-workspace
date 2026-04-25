@@ -1,0 +1,85 @@
+[project]
+name = "ikrs-heartbeat"
+version = "0.1.0"
+description = "IKAROS Workspace autonomous heartbeat (Tier II — Gemini on-VM, hourly)."
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "IKAROS Intelligence", email = "moe@ikaros.ae" }]
+
+# Runtime dependencies. Pinning to compatible-release ranges so security
+# patches roll in but breaking majors don't surprise us at install time.
+#
+# 2026-04-25 (E.2): swapped legacy `google-generativeai` (archived
+# 2025-12-16, EOL 2025-11-30) for the unified `google-genai` SDK. Floor
+# at 1.70 to skip the 1.67-1.68 churn (typing-extensions bug +
+# Interactions API rename); ceiling at 2.0 because 1.x is current major
+# and minor versions have shipped breaking changes.
+dependencies = [
+  "google-genai>=1.70,<2.0",        # Gemini Tier II adapter (E.2)
+  "firebase-admin>=6.5,<7.0",       # Firestore writes via service account
+  "google-api-python-client>=2.130,<3.0",  # Gmail + Calendar APIs
+  "google-auth>=2.30,<3.0",
+  "google-auth-oauthlib>=1.2,<2.0",
+  "google-auth-httplib2>=0.2,<1.0",
+  "requests>=2.32,<3.0",            # Telegram Bot API
+  "python-dotenv>=1.0,<2.0",        # /etc/ikrs-heartbeat/secrets.env
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9.0",
+  "pytest-cov>=5.0,<6.0",
+  "ruff>=0.4,<1.0",
+  "mypy>=1.10,<2.0",
+]
+
+[project.scripts]
+ikrs-heartbeat = "heartbeat.main:main"
+ikrs-heartbeat-oauth-bootstrap = "heartbeat.oauth_bootstrap:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["heartbeat*"]
+
+# Ship prompt templates as package data so importlib.resources finds them
+# in both editable installs and the wheel.
+[tool.setuptools.package-data]
+"heartbeat.prompts" = ["*.txt"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+
+# Google SDKs (google-auth, google-auth-oauthlib, googleapiclient) are
+# largely untyped — they ship without `py.typed` markers. Suppress the
+# noise so we still get strict typing on our own code without per-line
+# `# type: ignore` litter.
+[[tool.mypy.overrides]]
+module = [
+  "google.*",
+  "googleapiclient.*",
+  "google_auth_oauthlib.*",
+  "firebase_admin.*",
+  "requests.*",
+]
+ignore_missing_imports = true
+follow_untyped_imports = true

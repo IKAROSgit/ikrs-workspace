@@ -18,6 +18,7 @@ import {
   startOAuthFlow,
 } from "@/lib/tauri-commands";
 import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
+import { HeartbeatStatusCard } from "@/components/heartbeat/HeartbeatStatusCard";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import type { SkillUpdateParams } from "@/types/skills";
@@ -306,6 +307,8 @@ export default function SettingsView() {
       {activeEngagementId && (
         <SkillStatusPanel updateParams={skillUpdateParams} />
       )}
+
+      <HeartbeatStatusCard />
 
       <Card>
         <CardHeader>

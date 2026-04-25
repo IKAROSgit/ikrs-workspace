@@ -191,6 +191,22 @@ service cloud.firestore {
       }
     }
 
+    // Phase E heartbeat telemetry. Both Tier I (Tauri in-app) and Tier
+    // II (on-VM Python service) write here via the Admin SDK service
+    // account, which bypasses these rules entirely. The rules only
+    // gate **client SDK reads** — i.e. Tier I's reconciler reading the
+    // last hour of telemetry to verify Tier II's writes (spec line 65).
+    //
+    // Posture: any authenticated consultant may read any heartbeat_health
+    // doc. Acceptable for the M3 single-tenant deployment Moe runs;
+    // tighten by tenantId when commercial multi-tenant lands (Phase F).
+    // Writes via client SDK are explicitly denied — only the Admin SDK
+    // (Tier II's service account) writes telemetry.
+    match /heartbeat_health/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // Deny everything else
     match /{document=**} {
       allow read, write: if false;
