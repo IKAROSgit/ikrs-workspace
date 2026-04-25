@@ -186,6 +186,9 @@ def test_get_firestore_client_raises_without_credentials(tmp_path: Path) -> None
 
 
 def test_write_kanban_task_serialises_full_doc(tmp_path: Path) -> None:
+    """Per E.5 post-code challenge: doc shape must match Tauri's Task type
+    (src/types/index.ts:99) so the existing Kanban listeners pick up
+    heartbeat-emitted cards without client-side schema migration."""
     fake_client = MagicMock()
     write_kanban_task(
         tenant_id="moe",
@@ -193,16 +196,55 @@ def test_write_kanban_task_serialises_full_doc(tmp_path: Path) -> None:
         action=_kanban_action("kt1"),
         client=fake_client,
     )
+    # Collection name is namespaced — "ikrs_tasks" not "tasks".
+    fake_client.collection.assert_called_once_with("ikrs_tasks")
+
     call = fake_client.collection.return_value.document.return_value.set.call_args
     doc = call.args[0]
-    assert doc["tenantId"] == "moe"
-    assert doc["engagementId"] == "blr"
+    # Tauri Task fields:
+    assert doc["_v"] == 1
     assert doc["id"] == "kt1"
+    assert doc["engagementId"] == "blr"
     assert doc["title"] == "Reply to Sarah"
-    assert doc["priority"] == "high"
-    assert doc["source"] == "heartbeat-tier-ii"
+    assert doc["status"] == "backlog"
+    # heartbeat priority "high" → Tauri "p2"
+    assert doc["priority"] == "p2"
+    assert doc["tags"] == ["heartbeat", "tier-ii"]
+    assert doc["subtasks"] == []
+    assert doc["source"] == "claude"
     assert doc["createdAt"] == "2026-04-25T12:00:00+00:00"
+    assert doc["updatedAt"] == "2026-04-25T12:00:00+00:00"
+    # Heartbeat-specific extras (not on Tauri's Task type but harmless):
+    assert doc["tenantId"] == "moe"
+    assert doc["rationale"] == "board meeting tomorrow"
     assert call.kwargs == {"merge": False}
+
+
+def test_write_kanban_task_priority_mapping() -> None:
+    """Verify the heartbeat → Tauri priority mapping covers all four
+    heartbeat values."""
+    fake_client = MagicMock()
+    cases = [("urgent", "p1"), ("high", "p2"), ("medium", "p3"), ("low", "p3")]
+    for hb_priority, expected_tauri in cases:
+        action = KanbanTaskAction(
+            type="kanban_task",
+            id=f"id-{hb_priority}",
+            title="t",
+            description="d",
+            priority=hb_priority,  # type: ignore[arg-type]
+            rationale="r",
+            emitted_at="t",
+        )
+        write_kanban_task(
+            tenant_id="moe",
+            engagement_id="blr",
+            action=action,
+            client=fake_client,
+        )
+        last_call = (
+            fake_client.collection.return_value.document.return_value.set.call_args
+        )
+        assert last_call.args[0]["priority"] == expected_tauri
 
 
 def test_write_kanban_task_wraps_sdk_exception() -> None:

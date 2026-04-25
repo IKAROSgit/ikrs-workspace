@@ -82,6 +82,10 @@ class TickResult:
     status: Status
     duration_ms: int
     actions_emitted: int
+    # When this tick FIRED (not when dispatch ran). Used by E.5's
+    # ``_make_tick_id`` so a retried dispatch overwrites the same
+    # heartbeat_health doc instead of appending a duplicate.
+    tick_ts: str = ""
     error_code: str | None = None
     summary: str = ""
     actions: list[Action] = field(default_factory=list)
@@ -112,6 +116,7 @@ def run_tick(
 
     started = time.monotonic()
     now = now or datetime.now().astimezone()
+    tick_ts_iso = now.isoformat()
     state_path = state_path or _default_state_path(config)
     prompt_version = config.prompt_version or CURRENT_PROMPT_VERSION
 
@@ -127,6 +132,7 @@ def run_tick(
             status="error",
             prompt_version=prompt_version,
             message=str(exc),
+            tick_ts=tick_ts_iso,
         )
 
     # ---- 2. Signals -------------------------------------------------
@@ -145,6 +151,7 @@ def run_tick(
             prompt_version=prompt_version,
             message=str(exc),
             collector_errors=list(bundle.errors),
+            tick_ts=tick_ts_iso,
         )
 
     # Feed back natural-language summaries (not opaque hex IDs) so the
@@ -174,6 +181,7 @@ def run_tick(
                 prompt_version=prompt_version,
                 message=str(exc),
                 collector_errors=list(bundle.errors),
+                tick_ts=tick_ts_iso,
             )
 
     request = LlmRequest(
@@ -192,6 +200,7 @@ def run_tick(
             prompt_version=prompt_version,
             message=str(exc),
             collector_errors=list(bundle.errors),
+            tick_ts=tick_ts_iso,
         )
 
     # ---- 5. Parse JSON → typed actions -------------------------------
@@ -213,6 +222,7 @@ def run_tick(
             prompt_tokens=response.prompt_tokens,
             output_tokens=response.output_tokens,
             model_used=response.model,
+            tick_ts=tick_ts_iso,
         )
 
     # Re-key action IDs server-side so a stale/repeated LLM ID can't
@@ -253,6 +263,7 @@ def run_tick(
             status="error",
             duration_ms=_ms_since(started),
             actions_emitted=len(re_keyed),
+            tick_ts=now.isoformat(),
             error_code="state_save_failed",
             summary=summary,
             actions=re_keyed,
@@ -280,6 +291,7 @@ def run_tick(
         status=status,
         duration_ms=_ms_since(started),
         actions_emitted=len(re_keyed),
+        tick_ts=now.isoformat(),
         error_code=error_code,
         summary=summary,
         actions=re_keyed,
@@ -356,6 +368,7 @@ def _error_result(
     prompt_tokens: int = 0,
     output_tokens: int = 0,
     model_used: str = "",
+    tick_ts: str = "",
 ) -> TickResult:
     if message:
         logger.warning("tick error %s: %s", error_code, message)
@@ -363,6 +376,7 @@ def _error_result(
         status=status,
         duration_ms=_ms_since(started),
         actions_emitted=0,
+        tick_ts=tick_ts,
         error_code=error_code,
         summary="",
         actions=[],

@@ -101,6 +101,19 @@ def get_firestore_client(secrets: OutputSecrets) -> Any:
         return client
 
 
+# Heartbeat priority → Tauri TaskPriority. Spec uses {low, medium, high,
+# urgent}; the Tauri Task type (src/types/index.ts:15) uses {p1, p2, p3}.
+# Mapping is intentionally conservative — urgent collapses to p1, low/
+# medium to p3 so heartbeat-emitted cards default to "deal with later"
+# unless the LLM explicitly raised the flag.
+_HEARTBEAT_TO_TAURI_PRIORITY: dict[str, str] = {
+    "urgent": "p1",
+    "high": "p2",
+    "medium": "p3",
+    "low": "p3",
+}
+
+
 def write_kanban_task(
     *,
     tenant_id: str,
@@ -108,30 +121,53 @@ def write_kanban_task(
     action: KanbanTaskAction,
     client: FirestoreClient | Any | None = None,
 ) -> None:
-    """Upsert a Kanban task to ``tasks/{action.id}``.
+    """Upsert a Kanban task to ``ikrs_tasks/{action.id}``.
 
-    Idempotent: re-running with the same ``action.id`` overwrites the
-    existing doc, so a retried tick can't double-create. The tick
-    orchestrator's UUIDs make collisions astronomically unlikely.
+    Collection is ``ikrs_tasks`` (NAMESPACED — see firestore.rules:87
+    and Mission Control's separate ``tasks`` collection). Schema mirrors
+    the Tauri ``Task`` type (src/types/index.ts:99) so the existing
+    Firestore listeners + Kanban UI can render heartbeat-emitted cards
+    without any client-side changes.
+
+    Idempotent: ``set(merge=False)`` overwrites the existing doc, so a
+    retried tick (same ``action.id``) does not double-create. UUIDs
+    make collisions astronomically unlikely.
     """
 
     if client is None:
         raise ValueError("Firestore client must be provided (use get_firestore_client).")
 
+    # Derive the Tauri-shaped Kanban doc. New heartbeat cards land in
+    # the backlog column so the operator decides when to promote them.
     doc = {
-        "tenantId": tenant_id,
-        "engagementId": engagement_id,
+        "_v": 1,
         "id": action.id,
+        "engagementId": engagement_id,
+        "tenantId": tenant_id,  # denormalised; not on Tauri's Task type but
+                                  # cheap to carry for audit + future filtering
         "title": action.title,
         "description": action.description,
-        "priority": action.priority,
+        "status": "backlog",
+        "priority": _HEARTBEAT_TO_TAURI_PRIORITY.get(action.priority, "p3"),
+        "tags": ["heartbeat", "tier-ii"],
+        "subtasks": [],
+        "sortOrder": 0,
+        # Tauri's TaskSource is one of {manual, imported, claude}. Using
+        # "claude" since the heartbeat IS a Claude/Gemini-driven agent
+        # producing tasks autonomously.
+        "source": "claude",
+        "assignee": "consultant",
         "rationale": action.rationale,
-        "source": "heartbeat-tier-ii",
+        "notesCount": 0,
+        # Tauri reads createdAt/updatedAt as Firestore Timestamps, but
+        # Admin SDK accepts ISO strings + serverTimestamp interchangeably.
+        # We send the tick's emitted_at as both — operator gets a stable
+        # timestamp regardless of dispatch latency.
         "createdAt": action.emitted_at,
-        "type": "kanban_task",
+        "updatedAt": action.emitted_at,
     }
     try:
-        client.collection("tasks").document(action.id).set(doc, merge=False)
+        client.collection("ikrs_tasks").document(action.id).set(doc, merge=False)
     except Exception as exc:  # noqa: BLE001
         raise FirestoreError(
             f"task write failed for {action.id}: {type(exc).__name__}: {exc}",

@@ -157,6 +157,12 @@ def dispatch_outputs(
                 )
                 audit_lines += 1
 
+    # Use the tick's own timestamp (when run_tick fired) — not the
+    # dispatch clock — so a retried dispatch overwrites the same
+    # heartbeat_health doc instead of appending a duplicate.
+    # Per E.5 post-code challenge concern.
+    tick_ts_for_telemetry = result.tick_ts or now.isoformat()
+
     # ---- Tick-level audit line ---------------------------------------
 
     if config.outputs.audit_enabled:
@@ -165,7 +171,7 @@ def dispatch_outputs(
                 audit_log_path=audit_path,
                 tenant_id=config.tenant_id,
                 engagement_id=config.engagement_id,
-                tick_ts=now.isoformat(),
+                tick_ts=tick_ts_for_telemetry,
                 status=result.status,
                 duration_ms=result.duration_ms,
                 actions_emitted=result.actions_emitted,
@@ -183,7 +189,9 @@ def dispatch_outputs(
 
     telemetry_written = False
     if config.outputs.firestore_enabled:
-        tick_id = _make_tick_id(config.tenant_id, config.engagement_id, now)
+        tick_id = _make_tick_id_from_ts(
+            config.tenant_id, config.engagement_id, tick_ts_for_telemetry
+        )
         # 30-day TTL per spec — relative to tickTs.
         from datetime import timedelta
 
@@ -192,7 +200,7 @@ def dispatch_outputs(
             tenantId=config.tenant_id,
             engagementId=config.engagement_id,
             tier=tier,
-            tickTs=now.isoformat(),
+            tickTs=tick_ts_for_telemetry,
             status=result.status,
             durationMs=result.duration_ms,
             tokensUsed=result.tokens_used,
@@ -250,9 +258,23 @@ def _try_audit(
 
 def _make_tick_id(tenant_id: str, engagement_id: str, now: datetime) -> str:
     """Deterministic tick ID — same tickTs → same doc, so a retry
-    overwrites instead of accumulating."""
+    overwrites instead of accumulating.
 
-    # Replace ":" so the ID is firestore-doc-id-safe (Firestore allows
-    # colons but tools like the console URL-encode them).
-    safe_ts = now.isoformat().replace(":", "-")
+    Kept for API compatibility with callers (mostly tests). Production
+    code should use ``_make_tick_id_from_ts`` with ``result.tick_ts``
+    so the tick clock — not the dispatch clock — drives the ID.
+    """
+
+    return _make_tick_id_from_ts(tenant_id, engagement_id, now.isoformat())
+
+
+def _make_tick_id_from_ts(tenant_id: str, engagement_id: str, ts: str) -> str:
+    """Deterministic tick ID from a pre-formatted timestamp.
+
+    ``ts`` should be the ISO-8601 from ``TickResult.tick_ts``. Replace
+    ``:`` so the ID is firestore-doc-id-safe (Firestore allows colons
+    but tools like the console URL-encode them).
+    """
+
+    safe_ts = ts.replace(":", "-")
     return f"{tenant_id}__{engagement_id}__{safe_ts}"
