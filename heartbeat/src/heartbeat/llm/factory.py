@@ -8,15 +8,17 @@ which keeps E.4 stable across future provider additions.
 from __future__ import annotations
 
 from heartbeat.config import LlmConfig
-from heartbeat.llm.base import LlmClient
+from heartbeat.llm.base import LlmClient, LlmError
 
 
 def make_llm_client(config: LlmConfig) -> LlmClient:
     """Return a configured adapter.
 
-    Raises ``ValueError`` for unknown providers and ``NotImplementedError``
-    for providers we recognise but haven't implemented yet (currently:
-    "claude").
+    Raises ``LlmError`` for any unsupported provider — both unknown values
+    and recognised-but-deferred ones (``"claude"``). This way the tick
+    orchestrator (E.4) only needs ``except LlmError`` to record the failure
+    in telemetry; misconfiguring the provider can never crash the whole
+    tick.
     """
 
     provider = config.provider
@@ -27,8 +29,12 @@ def make_llm_client(config: LlmConfig) -> LlmClient:
 
         return GeminiClient(config)
     if provider == "claude":
-        raise NotImplementedError(
+        raise LlmError(
             "claude adapter is deferred until first commercial tenant "
-            "brings their own ANTHROPIC_API_KEY (spec §Out of scope)."
+            "brings their own ANTHROPIC_API_KEY (spec §Out of scope).",
+            error_code="provider_not_implemented",
         )
-    raise ValueError(f"unknown llm.provider: {provider!r}")
+    raise LlmError(
+        f"unknown llm.provider: {provider!r}",
+        error_code="unknown_provider",
+    )

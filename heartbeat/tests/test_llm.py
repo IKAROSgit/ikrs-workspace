@@ -212,17 +212,74 @@ def test_factory_returns_gemini_client_for_gemini_provider() -> None:
         del os.environ["GEMINI_API_KEY"]
 
 
-def test_factory_raises_not_implemented_for_claude() -> None:
-    with pytest.raises(NotImplementedError, match="claude"):
+def test_factory_claude_provider_raises_llm_error() -> None:
+    """Factory wraps the deferred-claude path as ``LlmError`` so the tick
+    orchestrator catches it via a single ``except LlmError`` rather than
+    needing ``except (LlmError, NotImplementedError, ValueError)``.
+    """
+    with pytest.raises(LlmError) as exc_info:
         make_llm_client(_cfg("claude"))
+    assert exc_info.value.error_code == "provider_not_implemented"
+    assert "claude" in str(exc_info.value)
 
 
-def test_factory_raises_value_error_for_unknown_provider() -> None:
-    # We have to bypass the LlmConfig validator (which only allows
-    # gemini/claude) by constructing the dataclass directly in a way that
-    # mirrors a future provider. Use object.__setattr__ since LlmConfig is
-    # frozen.
+def test_factory_unknown_provider_raises_llm_error() -> None:
     cfg = LlmConfig(provider="gemini")
+    # LlmConfig is frozen; mutate via object.__setattr__ to mirror a future
+    # provider value sneaking past the loader. Acceptable smell — the
+    # cleaner alternative would be reshaping LlmConfig and we'll do that
+    # in E.4 if the request shape changes again.
     object.__setattr__(cfg, "provider", "openai")
-    with pytest.raises(ValueError, match="unknown llm.provider"):
+    with pytest.raises(LlmError) as exc_info:
         make_llm_client(cfg)
+    assert exc_info.value.error_code == "unknown_provider"
+
+
+# -------- bound-config fallback (post-E.2-challenge fix) --------
+
+
+def test_request_falls_back_to_bound_config() -> None:
+    """``LlmRequest(prompt=...)`` with no overrides should use the
+    adapter's bound LlmConfig — not silent defaults from base.py."""
+    cfg = LlmConfig(
+        provider="gemini",
+        model="gemini-2.5-flash",
+        temperature=0.9,
+        max_output_tokens=512,
+    )
+    fake = _fake_client()
+    client = GeminiClient(cfg, _client=fake)
+
+    resp = client.generate(LlmRequest(prompt="hi"))
+
+    kwargs = fake.models.generate_content.call_args.kwargs
+    assert kwargs["model"] == "gemini-2.5-flash"
+    assert kwargs["config"].temperature == 0.9
+    assert kwargs["config"].max_output_tokens == 512
+    # Response echoes the model that was actually used.
+    assert resp.model == "gemini-2.5-flash"
+
+
+def test_request_overrides_take_precedence_over_bound_config() -> None:
+    cfg = LlmConfig(
+        provider="gemini",
+        model="gemini-2.5-flash",
+        temperature=0.9,
+        max_output_tokens=512,
+    )
+    fake = _fake_client()
+    client = GeminiClient(cfg, _client=fake)
+
+    client.generate(
+        LlmRequest(
+            prompt="hi",
+            model="gemini-2.5-pro",
+            temperature=0.0,
+            max_output_tokens=8192,
+        )
+    )
+
+    kwargs = fake.models.generate_content.call_args.kwargs
+    assert kwargs["model"] == "gemini-2.5-pro"
+    assert kwargs["config"].temperature == 0.0
+    assert kwargs["config"].max_output_tokens == 8192

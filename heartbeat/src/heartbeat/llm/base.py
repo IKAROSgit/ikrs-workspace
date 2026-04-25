@@ -18,15 +18,29 @@ class LlmRequest:
     Kept tiny on purpose. The tick orchestrator builds these from the
     rendered prompt template (E.4); adapters translate to provider-specific
     schemas internally.
+
+    Generation knobs (model, temperature, max_output_tokens) are optional
+    per-request **overrides**. When ``None`` (the default), the adapter
+    uses the values bound to its ``LlmConfig`` at construction. This
+    eliminates the silent-default footgun the post-code agent flagged
+    on commit a204954: a caller building ``LlmRequest(prompt=...)`` no
+    longer accidentally pins the model to "gemini-2.5-pro" when the
+    operator's config picked "gemini-2.5-flash" — by default the request
+    inherits the configured model.
+
+    TODO(E.4): when the prompt template lands and we need the model to
+    return strict JSON for Firestore writes, add ``response_json_schema:
+    dict | None = None`` here. ``google-genai==1.73.x`` supports it via
+    ``GenerateContentConfig(response_mime_type="application/json",
+    response_json_schema=...)``.
     """
 
     prompt: str
     system_instruction: str | None = None
-    # Generation knobs. Defaults match LlmConfig defaults so a caller can
-    # always pass an LlmRequest(prompt=...) and get sane behaviour.
-    model: str = "gemini-2.5-pro"
-    temperature: float = 0.2
-    max_output_tokens: int = 4096
+    # All three default to None → adapter falls back to bound LlmConfig.
+    model: str | None = None
+    temperature: float | None = None
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True)

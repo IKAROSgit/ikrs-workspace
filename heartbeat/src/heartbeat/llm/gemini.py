@@ -69,15 +69,30 @@ class GeminiClient(LlmClient):
                 error_code="sdk_import_failed",
             ) from exc
 
+        # Per-request fields are optional overrides; fall back to the
+        # bound LlmConfig so callers can build LlmRequest(prompt=...) and
+        # still pick up the operator's configured model.
+        model = request.model or self._config.model
+        temperature = (
+            request.temperature
+            if request.temperature is not None
+            else self._config.temperature
+        )
+        max_output_tokens = (
+            request.max_output_tokens
+            if request.max_output_tokens is not None
+            else self._config.max_output_tokens
+        )
+
         gen_config = types.GenerateContentConfig(
             system_instruction=request.system_instruction,
-            temperature=request.temperature,
-            max_output_tokens=request.max_output_tokens,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
         )
 
         try:
             resp = self._client.models.generate_content(
-                model=request.model,
+                model=model,
                 contents=request.prompt,
                 config=gen_config,
             )
@@ -99,7 +114,7 @@ class GeminiClient(LlmClient):
             tokens_used=total_tokens,
             prompt_tokens=prompt_tokens,
             output_tokens=output_tokens,
-            model=request.model,
+            model=model,  # echo the model that was actually used, not the override-or-None
         )
 
 
