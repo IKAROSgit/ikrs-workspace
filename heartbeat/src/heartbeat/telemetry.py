@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+# Spec §Telemetry restricts these to the listed values. Using Literal lets
+# mypy + ruff catch typos at static-check time before they hit Firestore.
+Tier = Literal["I", "II"]
+Status = Literal["ok", "error", "skipped", "no-op"]
 
 
 @dataclass(frozen=True)
@@ -19,9 +24,9 @@ class HeartbeatHealthDoc:
 
     tenantId: str
     engagementId: str
-    tier: str  # "I" | "II"
+    tier: Tier
     tickTs: str  # ISO-8601 with TZ
-    status: str  # ok | error | skipped | no-op
+    status: Status
     durationMs: int
     tokensUsed: int
     promptVersion: str

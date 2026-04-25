@@ -120,3 +120,52 @@ def test_main_real_tick_refuses_until_e4(tmp_path: Path) -> None:
 def test_main_missing_config_returns_two(tmp_path: Path) -> None:
     rc = main_mod.main(["--dry-run", "--config", str(tmp_path / "nope.toml")])
     assert rc == 2
+
+
+def test_audit_log_path_traversal_rejected(tmp_path: Path) -> None:
+    """A relative ``audit_log_path`` that escapes ``vault_root`` must be
+    rejected. Without this guard, a hostile or malformed config could write
+    JSONL anywhere the (root-owned) systemd unit has perms — including
+    ``/etc/passwd``.
+    """
+
+    cfg_path = tmp_path / "traversal.toml"
+    cfg_path.write_text(
+        textwrap.dedent(
+            f"""\
+            tenant_id = "x"
+            engagement_id = "y"
+            vault_root = "{tmp_path}/vault"
+            audit_log_path = "../../../etc/passwd"
+
+            [outputs]
+            firestore_enabled = false
+            """
+        )
+    )
+    with pytest.raises(ValueError, match="outside vault_root"):
+        load_config(cfg_path)
+
+
+def test_audit_log_path_absolute_allowed(tmp_path: Path) -> None:
+    """Operator-supplied absolute ``audit_log_path`` is trusted — only
+    relative paths are containment-checked.
+    """
+
+    abs_log = tmp_path / "external.jsonl"
+    cfg_path = tmp_path / "abs.toml"
+    cfg_path.write_text(
+        textwrap.dedent(
+            f"""\
+            tenant_id = "x"
+            engagement_id = "y"
+            vault_root = "{tmp_path}/vault"
+            audit_log_path = "{abs_log}"
+
+            [outputs]
+            firestore_enabled = false
+            """
+        )
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.audit_log_path == abs_log

@@ -99,11 +99,19 @@ def main(argv: list[str] | None = None) -> int:
     # E.1 stub: real tick lands in E.4 once orchestrator + prompt + outputs
     # are wired up. We refuse to run a non-dry tick today so a misconfigured
     # systemd timer cannot silently no-op against production Firestore.
+    #
+    # NOTE for E.6 (systemd unit author): this returns rc=64 (EX_USAGE),
+    # which systemd treats as a failure. The unit MUST set
+    #     RestartPreventExitStatus=64
+    #     SuccessExitStatus=64
+    # otherwise `Restart=on-failure` will busy-loop the timer until E.4
+    # ships. Once E.4 lands, this branch goes away and the systemd unit
+    # can drop the special-case.
     logger.error(
         "Real tick not implemented yet (E.4). Re-run with --dry-run, "
         "or wait for sub-phase E.4 to land."
     )
-    return 64  # EX_USAGE
+    return 64  # EX_USAGE — see E.6 systemd note above.
 
 
 if __name__ == "__main__":  # pragma: no cover

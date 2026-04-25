@@ -10,13 +10,14 @@ import logging
 from dataclasses import dataclass
 
 from heartbeat.config import HeartbeatConfig
+from heartbeat.telemetry import Status
 
 logger = logging.getLogger("heartbeat.tick")
 
 
 @dataclass(frozen=True)
 class TickResult:
-    status: str  # ok | error | skipped | no-op
+    status: Status
     duration_ms: int
     actions_emitted: int
     error_code: str | None = None

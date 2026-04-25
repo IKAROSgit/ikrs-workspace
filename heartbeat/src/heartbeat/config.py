@@ -95,7 +95,10 @@ def load_config(path: Path) -> HeartbeatConfig:
     if missing:
         raise ValueError(f"missing required keys in {path}: {', '.join(missing)}")
 
-    vault_root = Path(str(raw["vault_root"])).expanduser()
+    # Resolve symlinks + normalize. The VM may have /home/ikrs as a symlink
+    # to a mounted volume; downstream containment checks (audit_log_path
+    # below, vault diff signal in E.3) all assume vault_root is a real path.
+    vault_root = Path(str(raw["vault_root"])).expanduser().resolve()
 
     llm_raw = raw.get("llm", {}) or {}
     llm = LlmConfig(
@@ -132,9 +135,22 @@ def load_config(path: Path) -> HeartbeatConfig:
 
     audit_log_path_raw = raw.get("audit_log_path", "_memory/heartbeat-log.jsonl")
     audit_log_path = Path(str(audit_log_path_raw))
-    if not audit_log_path.is_absolute():
+    if audit_log_path.is_absolute():
+        # Operator opted out of in-vault audit log; we trust them.
+        audit_log_path = audit_log_path.expanduser()
+    else:
         # Relative paths are interpreted relative to vault_root for portability.
-        audit_log_path = vault_root / audit_log_path
+        # Guard against ``../`` traversal — a hostile or malformed config
+        # could otherwise write JSONL outside the vault (e.g. /etc/passwd).
+        candidate = (vault_root / audit_log_path).resolve()
+        try:
+            candidate.relative_to(vault_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"audit_log_path {audit_log_path_raw!r} resolves outside "
+                f"vault_root ({candidate} not inside {vault_root})"
+            ) from exc
+        audit_log_path = candidate
 
     return HeartbeatConfig(
         tenant_id=str(raw["tenant_id"]),
