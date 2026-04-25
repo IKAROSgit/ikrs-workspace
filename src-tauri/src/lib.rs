@@ -1,10 +1,12 @@
 mod claude;
 mod commands;
+mod heartbeat;
 mod memory;
 mod oauth;
 mod skills;
 
 use claude::ClaudeSessionManager;
+use heartbeat::{spawn_tier_i_loop, HeartbeatState};
 use tauri::Manager;
 
 /// One-time migration: move app data from old identifier directory to new.
@@ -57,6 +59,7 @@ pub fn run() {
         .manage(commands::task_watch::TaskWatchState::default())
         .manage(oauth::token_cache::TokenCache::default())
         .manage(ClaudeSessionManager::new())
+        .manage(HeartbeatState::default())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("No app data dir");
             migrate_app_data(&app_data_dir);
@@ -72,6 +75,14 @@ pub fn run() {
             app.manage(resolved);
 
             claude::registry::cleanup_orphans(&app_data_dir);
+
+            // Phase E.7: Tier I heartbeat. Spawns a tokio interval that
+            // emits `heartbeat:tier-i:tick` events every hour while the
+            // app is open. JS handles the actual reconciliation work
+            // (read recent heartbeat_health, sanity-check Tier II's
+            // writes, surface to UI banner).
+            spawn_tier_i_loop(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -114,6 +125,8 @@ pub fn run() {
             skills::commands::scaffold_engagement_skills_cmd,
             skills::commands::check_skill_updates_cmd,
             skills::commands::apply_skill_updates_cmd,
+            // Heartbeat — Phase E.7 Tier I
+            commands::heartbeat::heartbeat_run_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
