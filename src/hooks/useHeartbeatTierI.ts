@@ -76,7 +76,9 @@ interface HeartbeatHealthDoc {
 }
 
 const STALENESS_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
-const TELEMETRY_QUERY_LIMIT = 5;
+// We only ever read docs[0]; keep the listener payload tiny so Firestore
+// quota stays small and the snapshot delivery is fast.
+const TELEMETRY_QUERY_LIMIT = 1;
 
 const INITIAL_STATUS: HeartbeatTierIStatus = {
   verdict: "unknown",

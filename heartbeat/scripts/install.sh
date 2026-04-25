@@ -67,17 +67,29 @@ require_command() {
 
 # Prompt for a secret only if not already set + not present in secrets.env.
 # $1: env-var name. $2: prompt label. $3: existing-secrets file path.
+#
+# Security: never use `eval` on file content. A secrets.env value
+# containing `$(...)` or backticks would otherwise execute as shell when
+# we re-read it. Strip surrounding quotes manually with parameter
+# expansion, then assign via `printf -v` (which does NOT evaluate).
 read_secret_if_missing() {
   local var="$1" label="$2" existing="$3"
   if [[ -n "${!var:-}" ]]; then
     return 0
   fi
   if [[ -f "$existing" ]] && grep -q "^${var}=" "$existing"; then
-    # Already in secrets.env — preserve it.
-    eval "$var=$(grep "^${var}=" "$existing" | cut -d= -f2- | tr -d '\"')"
+    # Pull the raw line, take everything after the first `=`, strip
+    # at-most-one pair of surrounding double quotes. No shell expansion.
+    local raw_value
+    raw_value="$(grep "^${var}=" "$existing" | head -n 1 | cut -d= -f2-)"
+    # Strip optional leading/trailing double quote.
+    raw_value="${raw_value#\"}"
+    raw_value="${raw_value%\"}"
+    printf -v "$var" "%s" "$raw_value"
     return 0
   fi
   printf "[install] %s: " "$label"
+  local value
   read -r value
   printf -v "$var" "%s" "$value"
 }
