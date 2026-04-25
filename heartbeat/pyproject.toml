@@ -8,15 +8,20 @@ authors = [{ name = "IKAROS Intelligence", email = "moe@ikaros.ae" }]
 
 # Runtime dependencies. Pinning to compatible-release ranges so security
 # patches roll in but breaking majors don't surprise us at install time.
+#
+# 2026-04-25 (E.2): swapped legacy `google-generativeai` (archived
+# 2025-12-16, EOL 2025-11-30) for the unified `google-genai` SDK. Floor
+# at 1.70 to skip the 1.67-1.68 churn (typing-extensions bug +
+# Interactions API rename); ceiling at 2.0 because 1.x is current major
+# and minor versions have shipped breaking changes.
 dependencies = [
-  "google-generativeai>=0.8,<1.0",  # Gemini Tier II adapter
+  "google-genai>=1.70,<2.0",        # Gemini Tier II adapter (E.2)
   "firebase-admin>=6.5,<7.0",       # Firestore writes via service account
   "google-api-python-client>=2.130,<3.0",  # Gmail + Calendar APIs
   "google-auth>=2.30,<3.0",
   "google-auth-oauthlib>=1.2,<2.0",
   "google-auth-httplib2>=0.2,<1.0",
   "requests>=2.32,<3.0",            # Telegram Bot API
-  "tomli>=2.0,<3.0; python_version < '3.11'",  # native tomllib on >=3.11
   "python-dotenv>=1.0,<2.0",        # /etc/ikrs-heartbeat/secrets.env
 ]
 
