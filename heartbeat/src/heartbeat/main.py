@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from heartbeat.config import HeartbeatConfig, load_config
+from heartbeat.outputs import DispatchResult, OutputSecrets, dispatch_outputs
 from heartbeat.tick import TickResult, run_tick
 
 logger = logging.getLogger("heartbeat.main")
@@ -72,6 +73,20 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _log_dispatch_summary(dispatch: DispatchResult) -> None:
+    """Log E.5 dispatch outcome at INFO."""
+
+    logger.info(
+        "dispatch: dispatched=%d skipped_dedupe=%d failed=%d "
+        "telemetry_written=%s audit_lines=%d",
+        dispatch.actions_dispatched,
+        dispatch.actions_skipped_dedupe,
+        dispatch.actions_failed,
+        dispatch.telemetry_written,
+        dispatch.audit_lines_written,
+    )
+
+
 def _log_tick_summary(result: TickResult) -> None:
     """Log one line per tick at INFO so journalctl is human-scannable."""
 
@@ -124,12 +139,17 @@ def main(argv: list[str] | None = None) -> int:
         _print_dry_run_plan(config)
         return 0
 
-    # E.4: run a real tick. Outputs (Firestore, Telegram, audit log) land
-    # in E.5 — the result returned here carries the actions list so the
-    # E.5 dispatch layer can consume it. For now we log a summary and
-    # exit 0/1 based on tick success.
+    # E.4: produce the tick. E.5: dispatch its outputs.
     result = run_tick(config, token_path=args.token_path)
     _log_tick_summary(result)
+
+    secrets = OutputSecrets.from_env()
+    dispatch = dispatch_outputs(config, secrets, result, tier="II")
+    _log_dispatch_summary(dispatch)
+
+    # Tick is "successful" if the LLM call landed; dispatch errors are
+    # logged separately but don't push exit-code to non-zero (the audit
+    # log captures everything for ops). Only a hard tick error returns 1.
     return 0 if result.status in {"ok", "no-op"} else 1
 
 
