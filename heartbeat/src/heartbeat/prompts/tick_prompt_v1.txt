@@ -41,7 +41,10 @@ Tenant: {tenant_id}
 Engagement: {engagement_id}
 
 Last tick: {last_tick_ts}
-Recent action IDs (don't repeat these): {recent_action_ids}
+
+Recent actions you emitted (don't repeat these unless circumstances
+materially changed since):
+{recent_actions_block}
 
 Calendar (next {calendar_lookahead_hours}h):
 {calendar_block}

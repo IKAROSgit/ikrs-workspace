@@ -36,6 +36,7 @@ from heartbeat.actions import (
     TICK_RESPONSE_SCHEMA,
     Action,
     ActionParseError,
+    action_summary_line,
     parse_actions,
 )
 from heartbeat.config import HeartbeatConfig
@@ -146,13 +147,16 @@ def run_tick(
             collector_errors=list(bundle.errors),
         )
 
+    # Feed back natural-language summaries (not opaque hex IDs) so the
+    # LLM can compare *content* and avoid duplicating itself. Per E.4
+    # post-code challenge finding #1.
     rendered = render_tick_prompt(
         template,
         tick_ts=now.isoformat(),
         tenant_id=config.tenant_id,
         engagement_id=config.engagement_id,
         last_tick_ts=state.last_tick_ts or "",
-        recent_action_ids=state.last_action_ids[-_RECENT_ACTION_ID_WINDOW:],
+        recent_action_summaries=state.last_action_summaries[-_RECENT_ACTION_ID_WINDOW:],
         calendar_lookahead_hours=config.signals.calendar_lookahead_hours,
         gmail_lookback_hours=config.signals.gmail_lookback_hours,
         bundle=bundle,
@@ -212,20 +216,29 @@ def run_tick(
         )
 
     # Re-key action IDs server-side so a stale/repeated LLM ID can't
-    # collide with state.last_action_ids. The LLM-provided IDs were
-    # only meaningful for prompt-internal dedupe.
+    # collide with state.last_action_ids. Also stamp emitted_at so
+    # E.5's downstream writers (Firestore, audit log) have a stable
+    # timestamp independent of the dispatch latency.
     re_keyed: list[Action] = []
+    emitted_at = now.isoformat()
     for action in actions:
-        new_id = uuid.uuid4().hex
-        re_keyed.append(_replace_id(action, new_id))
+        re_keyed.append(_rekey_and_stamp(action, uuid.uuid4().hex, emitted_at))
 
     # ---- 6 + 7. Update state, save atomically ------------------------
+    # Persist BOTH IDs (so we can verify dispatch completion next tick)
+    # AND human-readable summaries (so the LLM has natural-language
+    # dedupe context, not opaque hex). Per E.4 post-code challenge
+    # finding #1.
+    new_action_summaries = [action_summary_line(a) for a in re_keyed]
     new_state = TickState(
         last_tick_ts=now.isoformat(),
         last_seen_event_ids=_collect_calendar_ids(bundle),
         last_seen_thread_ids=_collect_gmail_ids(bundle),
         last_action_ids=(state.last_action_ids + [a.id for a in re_keyed])[
             -_RECENT_ACTION_ID_WINDOW * 2 :
+        ],
+        last_action_summaries=(state.last_action_summaries + new_action_summaries)[
+            -_RECENT_ACTION_ID_WINDOW :
         ],
         last_vault_mtimes=new_vault_mtimes,
     )
@@ -308,15 +321,15 @@ def _collect_gmail_ids(bundle: SignalsBundle) -> list[str]:
     return [t.id for t in bundle.gmail.threads if t.id]
 
 
-def _replace_id(action: Action, new_id: str) -> Action:
-    """Return a copy of ``action`` with its ``id`` swapped.
+def _rekey_and_stamp(action: Action, new_id: str, emitted_at: str) -> Action:
+    """Return a copy of ``action`` with id + emitted_at set.
 
     Each ``Action`` dataclass is frozen, so we use ``dataclasses.replace``.
     """
 
     from dataclasses import replace
 
-    return replace(action, id=new_id)
+    return replace(action, id=new_id, emitted_at=emitted_at)
 
 
 def _pick_error_code(errors: list[CollectorError]) -> str | None:

@@ -28,11 +28,16 @@ class KanbanTaskAction:
     """Add a task to the engagement's Kanban board (Firestore tasks/*)."""
 
     type: Literal["kanban_task"]
-    id: str  # opaque ID — orchestrator generates a UUID per emission
+    id: str  # opaque UUID — orchestrator generates a fresh hex per emission
     title: str
     description: str
     priority: Priority
     rationale: str  # one-liner explaining why this matters now
+    # ISO-8601 timestamp set at re-key time. E.5's Firestore write uses
+    # this as the document's createdAt — independent of Firestore's own
+    # serverTimestamp so the order is stable even if Firestore is
+    # degraded.
+    emitted_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,7 @@ class MemoryUpdateAction:
     id: str
     note: str
     tags: list[str] = field(default_factory=list)
+    emitted_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -53,9 +59,31 @@ class TelegramPushAction:
     id: str
     message: str
     urgency: Urgency
+    emitted_at: str = ""
 
 
 Action = KanbanTaskAction | MemoryUpdateAction | TelegramPushAction
+
+
+def action_summary_line(action: Action) -> str:
+    """One-line natural-language summary for prompt-context dedupe.
+
+    Fed back to the LLM next tick (instead of opaque UUID hex) so the
+    model has natural-language context about what it emitted last
+    hour and can avoid repeating itself. Per E.4 post-code challenge
+    finding #1.
+    """
+
+    if isinstance(action, KanbanTaskAction):
+        return f"kanban_task[{action.priority}]: {action.title}"
+    if isinstance(action, MemoryUpdateAction):
+        snippet = action.note[:80]
+        return f"memory_update: {snippet}"
+    if isinstance(action, TelegramPushAction):
+        snippet = action.message[:80]
+        return f"telegram_push[{action.urgency}]: {snippet}"
+    # Defensive — unreachable while Action is the union above.
+    return f"unknown_action: {action!r}"
 
 
 # JSON schema the LLM must conform to. Used as

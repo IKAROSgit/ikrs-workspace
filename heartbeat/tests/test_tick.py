@@ -169,14 +169,20 @@ def test_run_tick_passes_response_schema_to_llm(tmp_path: Path) -> None:
     assert "summary" in request.response_json_schema["properties"]
 
 
-def test_run_tick_threads_recent_action_ids_into_prompt(tmp_path: Path) -> None:
+def test_run_tick_threads_recent_action_summaries_into_prompt(tmp_path: Path) -> None:
+    """Per E.4 post-code challenge fix: feed back natural-language
+    summaries (not opaque hex IDs) so the LLM can compare *content*."""
     config = load_config(_config(tmp_path))
     state_path = tmp_path / "state.json"
     save_state(
         state_path,
         TickState(
             last_tick_ts="2026-04-25T11:00:00+00:00",
-            last_action_ids=["aaa111", "bbb222"],
+            last_action_ids=["hex-id-1", "hex-id-2"],
+            last_action_summaries=[
+                "kanban_task[high]: Reply to Sarah re Q1 deck",
+                "memory_update: BLR client offsite confirmed for May",
+            ],
         ),
     )
     client = _mock_llm({"summary": "x", "actions": []})
@@ -190,9 +196,78 @@ def test_run_tick_threads_recent_action_ids_into_prompt(tmp_path: Path) -> None:
     )
 
     request: LlmRequest = client.generate.call_args.args[0]
-    assert "aaa111" in request.prompt
-    assert "bbb222" in request.prompt
+    # Natural-language summaries flow into the prompt.
+    assert "Reply to Sarah re Q1 deck" in request.prompt
+    assert "BLR client offsite confirmed for May" in request.prompt
+    # Opaque hex IDs do NOT — the LLM has no memory of those.
+    assert "hex-id-1" not in request.prompt
+    assert "hex-id-2" not in request.prompt
     assert "2026-04-25T11:00:00+00:00" in request.prompt
+
+
+def test_run_tick_persists_action_summaries(tmp_path: Path) -> None:
+    """After emitting actions, last_action_summaries should hold their
+    natural-language one-liners for the next tick's dedupe context."""
+    config = load_config(_config(tmp_path))
+    state_path = tmp_path / "state.json"
+    payload = {
+        "summary": "x",
+        "actions": [
+            {
+                "type": "kanban_task",
+                "id": "ignored",
+                "title": "Ping Sarah",
+                "description": "About the deck",
+                "priority": "high",
+                "rationale": "deadline tomorrow",
+            }
+        ],
+    }
+    client = _mock_llm(payload)
+
+    run_tick(
+        config,
+        token_path=tmp_path / "tok.json",
+        state_path=state_path,
+        now=datetime(2026, 4, 25, 12, 0, tzinfo=UTC),
+        _client=client,
+    )
+
+    from heartbeat.signals.state import load_state
+
+    loaded = load_state(state_path)
+    assert len(loaded.last_action_summaries) == 1
+    assert "Ping Sarah" in loaded.last_action_summaries[0]
+    assert loaded.last_action_summaries[0].startswith("kanban_task[high]")
+
+
+def test_run_tick_stamps_emitted_at_on_actions(tmp_path: Path) -> None:
+    """Per E.4 post-code challenge fix #2: every action must carry an
+    emitted_at timestamp set at re-key time."""
+    config = load_config(_config(tmp_path))
+    payload = {
+        "summary": "x",
+        "actions": [
+            {
+                "type": "memory_update",
+                "id": "ignored",
+                "note": "x",
+                "tags": [],
+            }
+        ],
+    }
+    client = _mock_llm(payload)
+
+    fixed_now = datetime(2026, 4, 25, 12, 0, tzinfo=UTC)
+    result = run_tick(
+        config,
+        token_path=tmp_path / "tok.json",
+        state_path=tmp_path / "state.json",
+        now=fixed_now,
+        _client=client,
+    )
+    assert len(result.actions) == 1
+    assert result.actions[0].emitted_at == fixed_now.isoformat()
 
 
 # ---------- error paths ---------------------------------------------------
@@ -457,7 +532,7 @@ def test_render_tick_prompt_handles_empty_bundle() -> None:
         tenant_id="moe",
         engagement_id="blr",
         last_tick_ts="",
-        recent_action_ids=[],
+        recent_action_summaries=[],
         calendar_lookahead_hours=24,
         gmail_lookback_hours=24,
         bundle=SignalsBundle(),
@@ -520,7 +595,7 @@ def test_render_tick_prompt_renders_signals() -> None:
         tenant_id="moe",
         engagement_id="blr",
         last_tick_ts="2026-04-25T11:00:00+00:00",
-        recent_action_ids=["aaa"],
+        recent_action_summaries=["kanban_task[high]: Old task"],
         calendar_lookahead_hours=24,
         gmail_lookback_hours=24,
         bundle=bundle,
@@ -529,7 +604,43 @@ def test_render_tick_prompt_renders_signals() -> None:
     assert "Q1 deck" in rendered
     assert "notes/a.md" in rendered
     assert "modified" in rendered
-    assert "aaa" in rendered
+    assert "Old task" in rendered
+
+
+def test_render_tick_prompt_truncates_mass_vault_changes() -> None:
+    """Per E.4 post-code challenge fix #6: a 100K-file vault change
+    (git checkout, backup restore) MUST NOT blow up the prompt."""
+    from heartbeat.prompts import load_prompt_template, render_tick_prompt
+    from heartbeat.signals.base import VaultFileChange
+
+    huge = [
+        VaultFileChange(
+            path=f"notes/file-{i:05d}.md",
+            change_type="modified",
+            mtime="2026-04-25T11",
+            size_bytes=100,
+        )
+        for i in range(5000)
+    ]
+    bundle = SignalsBundle(vault=VaultSignal(changed_files=huge))
+    template = load_prompt_template()
+    rendered = render_tick_prompt(
+        template,
+        tick_ts="2026-04-25T12:00:00+00:00",
+        tenant_id="moe",
+        engagement_id="blr",
+        last_tick_ts="",
+        recent_action_summaries=[],
+        calendar_lookahead_hours=24,
+        gmail_lookback_hours=24,
+        bundle=bundle,
+    )
+    # First N rendered, rest summarised in a single "(plus M more...)" line.
+    assert "(plus 4800 more files changed" in rendered
+    # Lower bound check: a 5000-file dump would be ~250KB; our cap keeps
+    # the rendered prompt well under that. Hard cap of ~50KB is plenty
+    # of headroom over the 200-line limit.
+    assert len(rendered) < 50_000
 
 
 def test_load_prompt_template_unknown_version_raises() -> None:

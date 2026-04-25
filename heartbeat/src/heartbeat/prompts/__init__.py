@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 CURRENT_PROMPT_VERSION = "tick_prompt.v1"
 
 
+# Cap on vault changes rendered into the prompt. Mass-change events
+# (git checkout, backup restore) can produce 100K+ paths in one tick;
+# rendering all of them blows past Gemini's context window AND wastes
+# tokens for no benefit (the model's reasoning doesn't scale with N
+# files). Per E.4 post-code challenge finding #6.
+_MAX_VAULT_CHANGES_IN_PROMPT = 200
+
+
 def load_prompt_template(version: str = CURRENT_PROMPT_VERSION) -> str:
     """Load the raw prompt template text for the given version.
 
@@ -46,12 +54,16 @@ def render_tick_prompt(
     tenant_id: str,
     engagement_id: str,
     last_tick_ts: str,
-    recent_action_ids: list[str],
+    recent_action_summaries: list[str],
     calendar_lookahead_hours: int,
     gmail_lookback_hours: int,
     bundle: SignalsBundle,
 ) -> str:
     """Fill the template with this tick's context.
+
+    ``recent_action_summaries`` are natural-language one-liners (per
+    ``actions.action_summary_line``) so the LLM has content-level
+    context for dedupe — not opaque hex IDs.
 
     Each block (calendar / gmail / vault / errors) is rendered as a
     bullet list so the model can scan it without having to parse our
@@ -64,7 +76,7 @@ def render_tick_prompt(
         tenant_id=tenant_id,
         engagement_id=engagement_id,
         last_tick_ts=last_tick_ts or "(first run)",
-        recent_action_ids=", ".join(recent_action_ids) if recent_action_ids else "(none)",
+        recent_actions_block=_render_recent_actions(recent_action_summaries),
         calendar_lookahead_hours=calendar_lookahead_hours,
         gmail_lookback_hours=gmail_lookback_hours,
         calendar_block=_render_calendar(bundle),
@@ -72,6 +84,12 @@ def render_tick_prompt(
         vault_block=_render_vault(bundle),
         errors_block=_render_errors(bundle),
     )
+
+
+def _render_recent_actions(summaries: list[str]) -> str:
+    if not summaries:
+        return "(none)"
+    return "\n".join(f"- {s}" for s in summaries)
 
 
 def _render_calendar(bundle: SignalsBundle) -> str:
@@ -120,9 +138,19 @@ def _render_vault(bundle: SignalsBundle) -> str:
         return "(not collected this tick)"
     if not bundle.vault.changed_files:
         return "(no vault changes)"
-    lines: list[str] = []
-    for change in bundle.vault.changed_files:
-        lines.append(f"- [{change.change_type}] {change.path} ({change.size_bytes} bytes)")
+    changes = bundle.vault.changed_files
+    truncated = len(changes) > _MAX_VAULT_CHANGES_IN_PROMPT
+    head = changes[:_MAX_VAULT_CHANGES_IN_PROMPT]
+    lines: list[str] = [
+        f"- [{c.change_type}] {c.path} ({c.size_bytes} bytes)" for c in head
+    ]
+    if truncated:
+        remaining = len(changes) - _MAX_VAULT_CHANGES_IN_PROMPT
+        lines.append(
+            f"- (plus {remaining} more files changed — likely a mass-change "
+            "event such as a `git checkout` or backup restore; truncated "
+            "to keep the prompt within the model's context budget)"
+        )
     return "\n".join(lines)
 
 

@@ -56,6 +56,10 @@ class TickState:
     last_seen_event_ids: list[str] = field(default_factory=list)
     last_seen_thread_ids: list[str] = field(default_factory=list)
     last_action_ids: list[str] = field(default_factory=list)
+    # Human-readable one-liners for the last N actions, fed back to the
+    # LLM next tick so it has natural-language context for dedupe (per
+    # E.4 post-code challenge). Bounded by the window size in tick.py.
+    last_action_summaries: list[str] = field(default_factory=list)
     last_vault_mtimes: dict[str, str] = field(default_factory=dict)
 
 
