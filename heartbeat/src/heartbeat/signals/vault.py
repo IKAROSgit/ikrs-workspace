@@ -167,7 +167,17 @@ def collect_vault_with_mtimes(
 
 
 def _iter_vault_files(root: Path) -> list[Path]:
-    """Walk the vault, skipping ignored dirs + files."""
+    """Walk the vault, skipping ignored dirs + files.
+
+    Symlink policy: NEVER follow symlinks. ``Path.is_dir()`` and
+    ``Path.is_file()`` follow symlinks by default; without this guard,
+    a vault containing ``etc-link -> /etc`` would have heartbeat ingest
+    /etc files into the LLM prompt and into ``last_vault_mtimes``. We
+    use ``is_symlink()`` as a hard pre-check before either is_dir / is_file
+    is consulted. Symlinked files are also skipped — operators who want
+    a file in the vault should put it there, not link to it from
+    elsewhere on the disk.
+    """
 
     out: list[Path] = []
     stack = [root]
@@ -180,6 +190,10 @@ def _iter_vault_files(root: Path) -> list[Path]:
             continue
         for child in children:
             if child.name in _IGNORE_DIR_NAMES:
+                continue
+            # Hard symlink guard — see docstring.
+            if child.is_symlink():
+                logger.debug("skipping symlink %s", child)
                 continue
             if child.is_dir():
                 stack.append(child)

@@ -127,5 +127,48 @@ def test_collect_vault_changes_sort_stable(tmp_path: Path) -> None:
     signal, error = collect_vault(vault_root=tmp_path, last_mtimes={})
     assert error is None
     assert signal is not None
+
+
+def test_collect_vault_does_not_follow_directory_symlinks(tmp_path: Path) -> None:
+    """If the operator has a symlink to /etc (or anywhere outside the
+    vault) inside their vault, the walker MUST NOT descend into it.
+    Without this guard, heartbeat would ingest /etc files into the LLM
+    prompt and into last_vault_mtimes — a security + privacy issue."""
+
+    real_outside = tmp_path / "outside"
+    real_outside.mkdir()
+    _touch(real_outside / "secret.txt", "should not appear")
+    _touch(tmp_path / "vault" / "n.md", "real")
+    # Symlink from inside the vault to the outside dir.
+    (tmp_path / "vault" / "leaky").symlink_to(real_outside, target_is_directory=True)
+
+    signal, error = collect_vault(vault_root=tmp_path / "vault", last_mtimes={})
+
+    assert error is None
+    assert signal is not None
+    paths = sorted(c.path for c in signal.changed_files)
+    # Only the real in-vault file should be reported. The symlinked dir
+    # and its contents must NOT appear.
+    assert paths == ["n.md"]
+    assert not any("secret" in p for p in paths)
+    assert not any("leaky" in p for p in paths)
+
+
+def test_collect_vault_does_not_follow_file_symlinks(tmp_path: Path) -> None:
+    """File symlinks are also skipped — operator should put the actual
+    file in the vault, not a link."""
+
+    real_outside = tmp_path / "outside"
+    real_outside.mkdir()
+    real_target = _touch(real_outside / "target.md", "secret content")
+    _touch(tmp_path / "vault" / "real.md")
+    (tmp_path / "vault" / "linked.md").symlink_to(real_target)
+
+    signal, error = collect_vault(vault_root=tmp_path / "vault", last_mtimes={})
+
+    assert error is None
+    assert signal is not None
+    paths = sorted(c.path for c in signal.changed_files)
+    assert paths == ["real.md"]
     paths = [c.path for c in signal.changed_files]
     assert paths == sorted(paths)

@@ -19,13 +19,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from heartbeat.signals.base import CollectorError
 from heartbeat.signals.state import write_atomic
 
 if TYPE_CHECKING:
     from google.oauth2.credentials import Credentials
+
+
+# Subset of CollectorError.source that this helper can name on failure.
+# Vault never goes through OAuth, so no "vault" branch is needed.
+GoogleSource = Literal["calendar", "gmail"]
 
 logger = logging.getLogger("heartbeat.signals.google_auth")
 
@@ -54,7 +59,7 @@ class GoogleAuthFailure(Exception):
 def load_google_credentials(
     token_path: Path,
     *,
-    source: str = "calendar",
+    source: GoogleSource = "calendar",
 ) -> Credentials:
     """Load token.json, refresh if expired, persist back. Returns creds.
 
@@ -67,7 +72,7 @@ def load_google_credentials(
     if not token_path.exists():
         raise GoogleAuthFailure(
             CollectorError(
-                source=source,  # type: ignore[arg-type]
+                source=source,
                 error_code="missing_token",
                 message=(
                     f"google token not found at {token_path}. Run the "
@@ -93,7 +98,7 @@ def load_google_credentials(
     if not creds.refresh_token:
         raise GoogleAuthFailure(
             CollectorError(
-                source=source,  # type: ignore[arg-type]
+                source=source,
                 error_code="oauth_refresh_failed",
                 message=(
                     "token has no refresh_token. Re-run install with "
@@ -108,7 +113,7 @@ def load_google_credentials(
         # Transient — DNS, connect, TLS. Next tick retries.
         raise GoogleAuthFailure(
             CollectorError(
-                source=source,  # type: ignore[arg-type]
+                source=source,
                 error_code="network_error",
                 message=f"google token refresh transport error: {exc}",
             )
@@ -117,7 +122,7 @@ def load_google_credentials(
         # Terminal — revoked, expired refresh, scope drift, deleted client.
         raise GoogleAuthFailure(
             CollectorError(
-                source=source,  # type: ignore[arg-type]
+                source=source,
                 error_code="oauth_refresh_failed",
                 message=(
                     f"google token refresh failed (likely revoked or "
