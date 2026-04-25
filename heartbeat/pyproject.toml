@@ -44,6 +44,11 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 include = ["heartbeat*"]
 
+# Ship prompt templates as package data so importlib.resources finds them
+# in both editable installs and the wheel.
+[tool.setuptools.package-data]
+"heartbeat.prompts" = ["*.txt"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

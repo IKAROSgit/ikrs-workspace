@@ -8,7 +8,7 @@ tick orchestrator never has to import a concrete class.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -16,23 +16,19 @@ class LlmRequest:
     """One synchronous request to an LLM.
 
     Kept tiny on purpose. The tick orchestrator builds these from the
-    rendered prompt template (E.4); adapters translate to provider-specific
+    rendered prompt template; adapters translate to provider-specific
     schemas internally.
 
     Generation knobs (model, temperature, max_output_tokens) are optional
     per-request **overrides**. When ``None`` (the default), the adapter
-    uses the values bound to its ``LlmConfig`` at construction. This
-    eliminates the silent-default footgun the post-code agent flagged
-    on commit a204954: a caller building ``LlmRequest(prompt=...)`` no
-    longer accidentally pins the model to "gemini-2.5-pro" when the
-    operator's config picked "gemini-2.5-flash" — by default the request
-    inherits the configured model.
+    uses the values bound to its ``LlmConfig`` at construction.
 
-    TODO(E.4): when the prompt template lands and we need the model to
-    return strict JSON for Firestore writes, add ``response_json_schema:
-    dict | None = None`` here. ``google-genai==1.73.x`` supports it via
-    ``GenerateContentConfig(response_mime_type="application/json",
-    response_json_schema=...)``.
+    Structured-output knobs (``response_mime_type`` and
+    ``response_json_schema``, both added in E.4) tell the model to return
+    strict JSON matching a schema. When provided, ``google-genai`` enforces
+    server-side and the response will be a valid JSON document — no need
+    for fence-stripping or markdown parsing in the orchestrator. The tick
+    uses this so action emission is reliable across runs.
     """
 
     prompt: str
@@ -41,6 +37,12 @@ class LlmRequest:
     model: str | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
+    # Structured output (E.4). Both must be set for JSON mode; either
+    # being None means free-form text. ``response_json_schema`` is a raw
+    # JSON Schema dict (not a pydantic class) so it stays portable across
+    # provider adapters.
+    response_mime_type: str | None = None
+    response_json_schema: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

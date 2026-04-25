@@ -109,12 +109,22 @@ def test_main_dry_run_returns_zero(
     assert any("blr-world" in rec.getMessage() for rec in caplog.records)
 
 
-def test_main_real_tick_refuses_until_e4(tmp_path: Path) -> None:
+def test_main_real_tick_fails_gracefully_without_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E.4 wires up run_tick. With no GEMINI_API_KEY in the env (CI default)
+    the tick fails at LLM init with a typed error_code, main returns 1
+    rather than crashing — proving the error pipeline is plumbed end to end.
+    """
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     cfg_path = _write_minimal_config(tmp_path)
-    rc = main_mod.main(["--config", str(cfg_path)])
-    # E.1 explicitly refuses to run a real tick — must return non-zero so a
-    # broken systemd timer does not silently no-op.
-    assert rc != 0
+    rc = main_mod.main(
+        ["--config", str(cfg_path), "--token-path", str(tmp_path / "no-tok.json")]
+    )
+    # No key → run_tick returns status="error", main maps to rc=1.
+    # This proves the pipeline never crashes uncaught.
+    assert rc == 1
 
 
 def test_main_missing_config_returns_two(tmp_path: Path) -> None:

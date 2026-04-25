@@ -2,11 +2,6 @@
 
 Invoked by systemd timer (``ikrs-heartbeat.timer``) every hour, or manually
 for dry-run / smoke tests.
-
-Sub-phases:
-- E.1 (this commit): wire up ``--dry-run`` so it parses config and prints a
-  plan without making any network call. The actual signal collection and LLM
-  call land in E.3 / E.4.
 """
 
 from __future__ import annotations
@@ -17,8 +12,14 @@ import sys
 from pathlib import Path
 
 from heartbeat.config import HeartbeatConfig, load_config
+from heartbeat.tick import TickResult, run_tick
 
 logger = logging.getLogger("heartbeat.main")
+
+
+# Default location of the Mac-side OAuth token, scp'd to the VM by
+# install.sh. Spec §Tier II §Auth on VM. E.6's installer writes here.
+_DEFAULT_TOKEN_PATH = Path("/etc/ikrs-heartbeat/google-token.json")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -46,6 +47,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run a single tick and exit (default behaviour; reserved for future loop mode).",
     )
     parser.add_argument(
+        "--token-path",
+        type=Path,
+        default=_DEFAULT_TOKEN_PATH,
+        help=(
+            "Path to the Google OAuth token.json (scp'd from operator's "
+            f"Mac during install). Default: {_DEFAULT_TOKEN_PATH}."
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -60,6 +70,24 @@ def _configure_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+
+
+def _log_tick_summary(result: TickResult) -> None:
+    """Log one line per tick at INFO so journalctl is human-scannable."""
+
+    logger.info(
+        "tick: status=%s actions=%d duration_ms=%d tokens=%d model=%s error=%s",
+        result.status,
+        result.actions_emitted,
+        result.duration_ms,
+        result.tokens_used,
+        result.model_used or "(none)",
+        result.error_code or "-",
+    )
+    if result.summary:
+        logger.info("tick summary: %s", result.summary)
+    for err in result.collector_errors:
+        logger.info("collector error: %s/%s — %s", err.source, err.error_code, err.message)
 
 
 def _print_dry_run_plan(config: HeartbeatConfig) -> None:
@@ -96,22 +124,13 @@ def main(argv: list[str] | None = None) -> int:
         _print_dry_run_plan(config)
         return 0
 
-    # E.1 stub: real tick lands in E.4 once orchestrator + prompt + outputs
-    # are wired up. We refuse to run a non-dry tick today so a misconfigured
-    # systemd timer cannot silently no-op against production Firestore.
-    #
-    # NOTE for E.6 (systemd unit author): this returns rc=64 (EX_USAGE),
-    # which systemd treats as a failure. The unit MUST set
-    #     RestartPreventExitStatus=64
-    #     SuccessExitStatus=64
-    # otherwise `Restart=on-failure` will busy-loop the timer until E.4
-    # ships. Once E.4 lands, this branch goes away and the systemd unit
-    # can drop the special-case.
-    logger.error(
-        "Real tick not implemented yet (E.4). Re-run with --dry-run, "
-        "or wait for sub-phase E.4 to land."
-    )
-    return 64  # EX_USAGE — see E.6 systemd note above.
+    # E.4: run a real tick. Outputs (Firestore, Telegram, audit log) land
+    # in E.5 — the result returned here carries the actions list so the
+    # E.5 dispatch layer can consume it. For now we log a summary and
+    # exit 0/1 based on tick success.
+    result = run_tick(config, token_path=args.token_path)
+    _log_tick_summary(result)
+    return 0 if result.status in {"ok", "no-op"} else 1
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -84,11 +84,20 @@ class GeminiClient(LlmClient):
             else self._config.max_output_tokens
         )
 
-        gen_config = types.GenerateContentConfig(
-            system_instruction=request.system_instruction,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
+        # Structured output: when both response_mime_type and
+        # response_json_schema are set, Gemini enforces JSON server-side.
+        # ``google-genai==1.73.x`` accepts ``response_json_schema`` as a
+        # plain dict (raw JSON Schema), no pydantic round-trip needed.
+        gen_config_kwargs: dict[str, Any] = {
+            "system_instruction": request.system_instruction,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        if request.response_mime_type is not None:
+            gen_config_kwargs["response_mime_type"] = request.response_mime_type
+        if request.response_json_schema is not None:
+            gen_config_kwargs["response_json_schema"] = request.response_json_schema
+        gen_config = types.GenerateContentConfig(**gen_config_kwargs)
 
         try:
             resp = self._client.models.generate_content(
