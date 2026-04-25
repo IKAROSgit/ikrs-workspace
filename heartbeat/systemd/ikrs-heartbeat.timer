@@ -1,0 +1,17 @@
+[Unit]
+Description=Run IKAROS Heartbeat once per hour
+Requires=ikrs-heartbeat.service
+
+[Timer]
+# Catch missed runs after a reboot — fires within 10 minutes of boot
+# if the previous tick was overdue.
+OnBootSec=10min
+# Hourly cadence per spec.
+OnUnitActiveSec=1h
+# Persist so a missed tick (laptop closed, network down) fires when
+# the timer comes back online.
+Persistent=true
+Unit=ikrs-heartbeat.service
+
+[Install]
+WantedBy=timers.target

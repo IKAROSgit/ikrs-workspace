@@ -1,0 +1,41 @@
+[Unit]
+Description=IKAROS Heartbeat — Tier II hourly tick (Gemini → Firestore + Telegram)
+Documentation=https://github.com/IKAROSgit/ikrs-workspace/blob/main/docs/specs/m3-phase-e-autonomous-heartbeat.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# One-shot per timer fire. No daemon, no restart loop.
+Type=oneshot
+
+User=ikrs
+Group=ikrs
+
+# Secrets injected at start time. Mode 0600 ikrs:ikrs.
+EnvironmentFile=/etc/ikrs-heartbeat/secrets.env
+
+ExecStart=/opt/ikrs-heartbeat/venv/bin/ikrs-heartbeat \
+  --config /etc/ikrs-heartbeat/heartbeat.toml \
+  --token-path /etc/ikrs-heartbeat/google-token.json
+
+StandardOutput=journal
+StandardError=journal
+
+# ---- hardening ----
+# Drop capabilities we never need.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# State (TickState JSON) lives here.
+ReadWritePaths=/var/lib/ikrs-heartbeat
+# Vault root is configured per-engagement; the install script appends a
+# matching ReadWritePaths= line during setup. Heartbeat needs read+write
+# under the vault for the audit log under _memory/.
+
+# Don't auto-restart — Type=oneshot + the timer's OnUnitActiveSec=1h
+# already gives us hourly retries. A restart loop on rc=1 would burn
+# the Gemini quota fast; we prefer to wait for the next scheduled tick.
+
+[Install]
+WantedBy=multi-user.target

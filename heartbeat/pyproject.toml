@@ -35,6 +35,7 @@ dev = [
 
 [project.scripts]
 ikrs-heartbeat = "heartbeat.main:main"
+ikrs-heartbeat-oauth-bootstrap = "heartbeat.oauth_bootstrap:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
