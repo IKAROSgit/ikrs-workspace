@@ -36,3 +36,17 @@ src-tauri/target/
 
 # Superpowers skill scratch (brainstorm sessions, etc.)
 .superpowers/
+
+# Phase E heartbeat (Python on-VM service)
+heartbeat/.venv/
+heartbeat/.pytest_cache/
+heartbeat/.mypy_cache/
+heartbeat/.ruff_cache/
+heartbeat/**/__pycache__/
+heartbeat/**/*.egg-info/
+heartbeat/build/
+heartbeat/dist/
+# Operator secrets — never commit. Live in /etc/ikrs-heartbeat/secrets.env
+# in production; locally they live alongside the example.
+heartbeat/config/secrets.env
+heartbeat/config/heartbeat.toml
