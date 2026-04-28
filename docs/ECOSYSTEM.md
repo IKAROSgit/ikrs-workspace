@@ -55,7 +55,7 @@ table (preserve history) and remove the section.
 | Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
-| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4 | 🚧 F.1-F.4 landed (spec + Tauri write + heartbeat read + multi-engagement); F.5-F.8 pending |
+| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | 🚧 F.1-F.5 landed (spec + Tauri write + heartbeat read + multi-engagement + migration); F.6-F.8 pending |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -541,6 +541,34 @@ rm /tmp/google-token.json
 sudo systemctl start ikrs-heartbeat.service
 ```
 
+**Migrate existing deployment to Firestore-synced tokens (Phase F)**:
+```bash
+# On the VM (after pulling Phase F code + pip install -e):
+# 1. Ensure TOKEN_ENCRYPTION_KEY is in secrets.env
+#    (install.sh generates it; or: openssl rand -base64 32)
+# 2. Source secrets so the script sees the key
+source /etc/ikrs-heartbeat/secrets.env
+export TOKEN_ENCRYPTION_KEY TOKEN_ENCRYPTION_KEY_VERSION
+export FIREBASE_SA_KEY_PATH=/etc/ikrs-heartbeat/firebase-sa.json
+
+# 3. Dry-run first — verify what would happen
+sudo -E /opt/ikrs-heartbeat/venv/bin/python \
+  ~/projects/apps/ikrs-workspace/heartbeat/scripts/migrate-token-to-firestore.py \
+  5L12siRpQDDXnPCk892H --dry-run
+
+# 4. Run for real
+sudo -E /opt/ikrs-heartbeat/venv/bin/python \
+  ~/projects/apps/ikrs-workspace/heartbeat/scripts/migrate-token-to-firestore.py \
+  5L12siRpQDDXnPCk892H
+
+# 5. Wait for next heartbeat tick, verify it reads from Firestore
+sudo systemctl start ikrs-heartbeat.service
+sudo journalctl -u ikrs-heartbeat -n 50 --no-pager | grep -i firestore
+
+# 6. Only after a successful tick, remove the legacy file
+sudo rm /etc/ikrs-heartbeat/google-token.json
+```
+
 **Debug a failing tick**:
 ```bash
 ssh moe_ikaros_ae@elara-vm
@@ -629,10 +657,11 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
 
 ## 7. Known limitations & open work
 
-1. **Single-token Tier II OAuth.** Phase E v1 reads one Google account
-   at a time. **Fix in progress:** Phase F spec locked at
-   `docs/specs/m3-phase-f-token-sync.md` — Firestore-synced
-   per-engagement encrypted tokens. F.2-F.8 implementation pending.
+1. **Single-token Tier II OAuth — Phase F shipped.** Legacy
+   single-token still supported via auto-wrap in config. Operator
+   migrates via `heartbeat/scripts/migrate-token-to-firestore.py`
+   (see §5.4 runbooks). New engagements use Firestore-synced tokens
+   automatically after connecting Google in the Tauri app.
 2. **Vault on Mac is not synced to VM by default.** First-soak
    deployments use an empty test vault on the VM; the vault collector
    reports zero changes. Real vault sync (Syncthing? rsync? gcsfuse?)
