@@ -111,9 +111,19 @@ pub async fn refresh_if_needed(keychain_key: &str, app: &AppHandle) -> Result<St
         .to_string();
     let new_expires_in = json["expires_in"].as_i64().unwrap_or(3600);
 
+    // Phase F fix: Google may rotate the refresh_token on access-token
+    // refresh (Desktop-app OAuth clients enrolled in rotation since 2022).
+    // If Google returns a new refresh_token, use it — the old one will be
+    // invalidated after a grace period. If absent, keep the existing one.
+    let new_refresh_token = json["refresh_token"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or(payload.refresh_token);
+
     let updated = TokenPayload {
         access_token: new_access_token.clone(),
-        refresh_token: payload.refresh_token, // Google doesn't always return a new refresh_token
+        refresh_token: new_refresh_token,
         expires_at: chrono::Utc::now().timestamp() + new_expires_in,
         client_id: payload.client_id,
         client_secret: payload.client_secret,

@@ -21,6 +21,7 @@ import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
 import { HeartbeatStatusCard } from "@/components/heartbeat/HeartbeatStatusCard";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { syncTokenToFirestore } from "@/lib/firestore-tokens";
 import type { SkillUpdateParams } from "@/types/skills";
 
 // Keep in sync with ChatView.tsx GOOGLE_SCOPES. 2026-04-20:
@@ -198,6 +199,20 @@ export default function SettingsView() {
       await openUrl(auth_url);
 
       const success = await tokenPromise;
+
+      // Phase F: sync encrypted token to Firestore for heartbeat
+      if (success) {
+        try {
+          const keychainKey = makeKeychainKey(activeEngagementId, "google");
+          const payload = await getCredential(keychainKey);
+          if (payload) {
+            await syncTokenToFirestore(activeEngagementId, payload);
+          }
+        } catch (e) {
+          console.warn("[Phase F] Firestore token sync failed (non-fatal):", e);
+        }
+      }
+
       setOauthStatus(success ? "success" : "error");
 
       if (!success) {

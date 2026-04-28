@@ -8,7 +8,7 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: 2026-04-28 (Phase F spec lock, all sections reviewed).
+Last verified: 2026-04-28 (Phase F.2 token sync, all sections reviewed).
 See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
 file in this list pre-dates an architecture-touching commit elsewhere,
 this doc is stale and trusting it is unsafe.
@@ -55,7 +55,7 @@ table (preserve history) and remove the section.
 | Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
-| Phase F encrypted token sync (planned) | Per-engagement OAuth via Firestore | §4 (planned) | 🚧 spec locked, F.2-F.8 pending |
+| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4 | 🚧 F.1 spec + F.2 Tauri write landed; F.3-F.8 pending |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -180,7 +180,7 @@ makes the engagement invisible to the operator.**
 |---|---|---|
 | `/Applications/IKAROS Workspace.app` | Installed Tauri app | Operator install |
 | `~/projects/apps/ikrs-workspace/` | Source repo (developer machine path) | Operator |
-| `~/projects/apps/ikrs-workspace/.env.local` | Firebase config (gitignored) | Operator, never committed |
+| `~/projects/apps/ikrs-workspace/.env.local` | Firebase config + `VITE_TOKEN_ENCRYPTION_KEY` (Phase F AES-256-GCM key, base64-encoded 32 bytes) (gitignored) | Operator, never committed |
 | `~/.ikrs-workspace/vaults/<engagement-slug>/` | Per-engagement vault (markdown + assets) | Operator |
 | `~/.local/bin/claude` (or other resolved path) | Claude Code CLI, used by Tauri's subprocess feature | Anthropic, installed via `npm i -g @anthropic-ai/claude-code` or similar |
 | Mac keychain (entries `IKAROS Workspace://oauth/{engagementId}/google`) | Per-engagement Google OAuth tokens | Tauri app via tauri-plugin-keyring |
@@ -194,7 +194,7 @@ makes the engagement invisible to the operator.**
 |---|---|---|---|
 | `~/projects/apps/ikrs-workspace/` | Code mirror (cloned from GitHub, on `main`) | 0755 | `moe_ikaros_ae` |
 | `/etc/ikrs-heartbeat/heartbeat.toml` | Non-secret config (tenant_id, engagement_id, vault_root, LLM knobs) | 0640 | `ikrs:ikrs` |
-| `/etc/ikrs-heartbeat/secrets.env` | Secret env vars: `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `FIREBASE_SA_KEY_PATH` | 0600 | `ikrs:ikrs` |
+| `/etc/ikrs-heartbeat/secrets.env` | Secret env vars: `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `FIREBASE_SA_KEY_PATH`, `TOKEN_ENCRYPTION_KEY` + `TOKEN_ENCRYPTION_KEY_VERSION` (Phase F) | 0600 | `ikrs:ikrs` |
 | `/etc/ikrs-heartbeat/firebase-sa.json` | Firebase Admin SDK service account JSON | 0600 | `ikrs:ikrs` |
 | `/etc/ikrs-heartbeat/google-token.json` | OAuth token (Phase E v1: single account; Phase F: replaced by Firestore-synced tokens) | 0600 | `ikrs:ikrs` |
 | `/var/lib/ikrs-heartbeat/` | Reserved for state (currently unused; state lives in vault) | 0750 | `ikrs:ikrs` |
@@ -523,6 +523,12 @@ Same as above with `TELEGRAM_BOT_TOKEN`.
 3. `sudo systemctl restart ikrs-heartbeat.service`.
 
 **Re-bootstrap OAuth (if Google account changes or token revoked)**:
+
+*Phase F (preferred)*: Re-connect Google in the Tauri app's Settings tab for
+the affected engagement. The token is automatically encrypted and synced to
+Firestore. The heartbeat picks it up on the next tick — no scp required.
+
+*Phase E fallback (legacy, if Phase F not yet deployed)*:
 ```bash
 # On Mac:
 cd ~/projects/apps/ikrs-workspace/heartbeat

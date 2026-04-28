@@ -13,7 +13,8 @@ import { useEngagementStore } from "@/stores/engagementStore";
 import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { OfflineBanner } from "@/components/OfflineBanner";
-import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession } from "@/lib/tauri-commands";
+import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession, getCredential, makeKeychainKey } from "@/lib/tauri-commands";
+import { syncTokenToFirestore } from "@/lib/firestore-tokens";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -89,6 +90,18 @@ export default function ChatView() {
         "oauth:token-stored",
         async () => {
           unlisten();
+          // Phase F: sync encrypted token to Firestore for heartbeat
+          if (activeEngagementId) {
+            try {
+              const keychainKey = makeKeychainKey(activeEngagementId, "google");
+              const payload = await getCredential(keychainKey);
+              if (payload) {
+                await syncTokenToFirestore(activeEngagementId, payload);
+              }
+            } catch (e) {
+              console.warn("[Phase F] Firestore token sync failed (non-fatal):", e);
+            }
+          }
           const sid = useClaudeStore.getState().sessionId;
           if (sid) await killClaudeSession(sid);
           await handleConnect();
