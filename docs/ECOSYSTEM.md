@@ -275,7 +275,150 @@ operator can see the failure.
    `Notify` signal → Rust loop wakes via tokio::select! → fires
    immediately with trigger="manual".
 
-### 5.3 Operational runbooks
+### 5.3 Telegram integration
+
+**Why it exists.** Tier II runs 24/7. When something genuinely urgent
+shows up while the operator is away from their desk (asleep, on a
+flight, in a meeting), email/Slack/Firestore aren't enough — the
+operator needs a **lock-screen mobile push** they can't miss. Telegram
+is the cheapest, most universal mobile push channel that doesn't
+require us to ship a native iOS/Android app.
+
+The intent is *narrow*: only the most urgency-flagged actions Gemini
+emits become Telegram pushes. The bulk of what the heartbeat surfaces
+(routine bank notifications, calendar items, vault changes) goes to
+Firestore and the Kanban — visible when the operator opens the app,
+silent until then. Telegram is reserved for things like:
+- A client escalation that landed in the inbox at 3am.
+- A same-day deadline conflict the model spots on the calendar.
+- A signed-contract email that needs an immediate reply before it
+  expires.
+
+**Architecture: per-operator bot, NOT a shared bot.** Every operator
+spins up their own Telegram bot via @BotFather. The bot token is
+captured at install time and stored in `/etc/ikrs-heartbeat/secrets.env`
+on the VM. There is no central IKAROS-controlled bot. This is a
+deliberate security choice: a shared bot token in any single secrets
+file would let any operator (or attacker who got the token) impersonate
+the heartbeat across every operator using that bot. Per-operator bots
+mean compromise is contained to one VM.
+
+The challenge agent on Phase E v3 specifically called out a shared-bot
+design as a mass-impersonation risk; v4 onward enforces per-operator.
+
+**Setup ritual** (one-time, ~90 seconds, captured by `heartbeat/scripts/install.sh`):
+
+1. Operator opens Telegram → DMs `@BotFather` → `/newbot` → picks a
+   name + username for the bot (e.g. `IKAROS Heartbeat (Moe)` /
+   `@moe_ikrs_heartbeat_bot`). BotFather replies with a token like
+   `8791762466:AAEgNmc1hVLPNm8UqyRJe8UmY5Yoxt3AgW8`.
+2. Operator messages their new bot once (any text — `/start` works).
+   This populates the bot's update buffer with at least one chat.
+3. Operator visits `https://api.telegram.org/bot<TOKEN>/getUpdates`
+   in a browser. The JSON response includes
+   `"chat":{"id":<NUMBER>,...}`. That `<NUMBER>` is the operator's
+   chat ID. Positive integer for personal DMs (~9-10 digits);
+   negative for group chats.
+4. `install.sh` prompts for `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`,
+   writes them to `/etc/ikrs-heartbeat/secrets.env` (mode 0600
+   `ikrs:ikrs`), then **runs `deleteWebhook` against the bot** —
+   this clears any pre-existing webhook config (the token might
+   have been used elsewhere previously) so `getUpdates` works
+   reliably going forward.
+5. Smoke test: `sudo systemctl start ikrs-heartbeat.service`. If
+   Gemini emits a `telegram_push` action, the operator gets a
+   notification within seconds.
+
+**Push pipeline.** When Gemini emits a `TelegramPushAction`, the
+dispatcher calls `heartbeat.outputs.telegram.send_telegram_push`,
+which:
+1. Reads `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` from `OutputSecrets`.
+2. Composes message text with an urgency-emoji prefix:
+   - `urgency: "info"` → `ℹ️ <message>` (informational, low-noise)
+   - `urgency: "warning"` → `⚠️ <message>` (worth attention soon)
+   - `urgency: "urgent"` → `🚨 <message>` (act now)
+3. POSTs to `https://api.telegram.org/bot<TOKEN>/sendMessage` with
+   `chat_id`, `text`, and `disable_web_page_preview: true`. 10-second
+   timeout per request.
+4. Maps non-2xx responses to typed `TelegramError.error_code`:
+   - HTTP 401 → `telegram_auth_failed` (token revoked, BotFather rotated)
+   - HTTP 429 → `rate_limited` (Telegram throttled this bot)
+   - other 4xx/5xx → `api_call_failed`
+   - `requests.RequestException` → `network_error`
+5. The error is recorded in the audit log + heartbeat_health doc;
+   the tick still completes successfully (Telegram failure is never
+   tick-fatal).
+
+**`TelegramPushAction` schema** (Python dataclass, `heartbeat/src/heartbeat/actions.py`):
+```python
+@dataclass(frozen=True)
+class TelegramPushAction:
+    type: Literal["telegram_push"]
+    id: str           # server-side UUID, set at re-key time
+    message: str      # model-authored text, prefixed with emoji at dispatch
+    urgency: Literal["info", "warning", "urgent"]
+    emitted_at: str   # ISO-8601, set at tick time
+```
+
+The model receives the schema as part of the prompt's
+`response_json_schema`. The prompt template (`tick_prompt_v1.txt`)
+explicitly tells it:
+
+> Reserve `urgency: "urgent"` for things that genuinely cannot wait
+> until morning — a same-day deadline, a client escalation, a calendar
+> conflict that needs to be resolved before a meeting starts. Inflated
+> urgency trains the operator to ignore you.
+
+**Tier coordination.** Telegram pushes are **Tier II only**. Tier I
+(in-Tauri) does NOT send Telegram messages — its reconciler is
+verification-only and surfaces issues via the in-app status pill. This
+keeps the design rule "if the human is at their desk, the app surfaces
+it; if they're not, Telegram surfaces it" clean.
+
+**Operational notes**:
+- Token rotation: `@BotFather` → `/revoke` → pick the bot → new token.
+  Edit `/etc/ikrs-heartbeat/secrets.env`, `systemctl restart`. Old
+  token immediately invalid (Telegram rejects with 401).
+- Chat ID can be a **group chat** (negative integer): the operator
+  can have a private "IKAROS notifications" group with multiple
+  family members or a co-worker, and the bot pushes to all of them.
+- The operator can mute the bot client-side (Telegram → bot DM →
+  Mute). The heartbeat keeps sending; the operator just doesn't get
+  woken up. Useful for sleep / vacations.
+- `deleteWebhook` is run only at install time, not per-tick. Calling
+  it on every tick would race with anything else using the bot.
+
+**What the integration does NOT do (yet)**:
+- No bi-directional flow. The bot is push-only. The operator can't
+  reply to the bot to confirm/dismiss/snooze actions. Phase F+ will
+  add `/confirm`, `/snooze 1h`, `/dismiss <id>` commands that mutate
+  Firestore.
+- No media (images, files, voice). Plain-text body only.
+- No Telegram-native rich formatting (HTML/Markdown). Just emoji
+  prefix + the model's text. Could enable `parse_mode: "MarkdownV2"`
+  in a future minor release; not done yet to avoid escaping headaches.
+- No quiet hours. Spec is explicit: 24/7 operation. Operator mutes
+  the bot client-side if needed.
+- No batching. Each `TelegramPushAction` becomes one HTTP POST.
+  At one tick per hour the volume is trivial; if a future tick
+  emits 10+ urgent pushes simultaneously, we'd hit Telegram's 30/sec
+  per-bot limit — but the prompt's bias-to-no-op constraint makes
+  this scenario unlikely in practice.
+
+**Future work (Phase F+)**:
+- Bi-directional Telegram: bot listens via `getUpdates` polling or
+  webhook, parses commands, mutates Firestore (e.g.
+  `/confirm <action_id>` → set `dispatchStatus: "confirmed"` on the
+  action's audit row).
+- Multi-engagement: today's single bot pushes everything. With
+  Phase F's per-engagement Firestore-synced tokens we could route
+  per-engagement pushes through different bots (or use chat ID
+  parameterised by engagement so one bot handles all).
+- Rich previews: include a deep-link to the Mac app's
+  `ikrs-workspace://action/<id>` URI so tapping the notification
+  opens the corresponding Kanban card.
+
+### 5.4 Operational runbooks
 
 **Build Mac app from source**:
 ```bash
