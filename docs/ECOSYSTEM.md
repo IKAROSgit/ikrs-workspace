@@ -8,7 +8,7 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: 2026-04-28 (Phase F.2 token sync, all sections reviewed).
+Last verified: 2026-04-28 (Phase G.1 spec lock, Phase F shipped).
 See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
 file in this list pre-dates an architecture-touching commit elsewhere,
 this doc is stale and trusting it is unsafe.
@@ -55,7 +55,10 @@ table (preserve history) and remove the section.
 | Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
-| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | 🚧 F.1-F.6 landed; F.7 (adversarial review) + F.8 (deploy) pending |
+| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | ✅ shipped (bb8a506) |
+| Phase G: Telegram bot poller (planned) | Bidirectional Telegram via `getUpdates` long-poll + Firestore command queue. Queue-based single-writer: poller writes queue only, tick processes. | §5.5, spec | 🚧 G.1 spec locked; G.2 implementation pending |
+| Phase G: Google Speech-to-Text (planned) | Voice message transcription for Telegram voice notes. Cost-capped per-engagement in Firestore `usage/{YYYY-MM}`. | spec | 🚧 G.1 spec locked; G.3 implementation pending |
+| Phase G: Firestore command queue (planned) | `engagements/{eid}/commands/{update_id}` — inbound Telegram commands queued for tick processing. Idempotent via update_id as doc ID. | §3.4, spec | 🚧 G.1 spec locked; G.2 implementation pending |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -231,6 +234,8 @@ works without password.
 | `taskNotes/{noteId}` | Per-task notes | engagement consultant | engagement consultant |
 | `taskNotes/{noteId}/shareEvents/{eventId}` | Append-only audit of share state changes | engagement consultant + clients | engagement consultant + clients |
 | `engagements/{id}/google_tokens/{provider}` | AES-256-GCM encrypted OAuth tokens (Phase F). Plaintext = `{access_token, refresh_token, expires_at, client_id, client_secret}`. Schema: `{ciphertext, iv, keyVersion, updatedAt, writtenBy}`. See `docs/specs/m3-phase-f-token-sync.md`. | engagement consultant (client SDK) + Admin SDK | engagement consultant (client SDK on OAuth success) + Admin SDK (heartbeat refresh-token writeback) |
+| `engagements/{id}/commands/{update_id}` | Phase G Telegram command queue. Inbound operator messages queued for tick processing. Doc ID = Telegram update_id (idempotent). Schema: `{type, payload, status, receivedAt, processedAt, telegramChatId, telegramMessageId}`. | Admin SDK | Admin SDK (poller writes, tick reads + updates status) |
+| `engagements/{id}/usage/{YYYY-MM}` | Phase G monthly cost tracking. Fields: `stt_seconds_used`, `tokens_used`, `distillation_tokens_used`. Per-engagement, resets monthly. | Admin SDK + owning consultant (read) | Admin SDK (atomic increment) |
 | `heartbeat_health/{tickId}` | Tier II telemetry, 30-day TTL via `expiresAt`. Tick ID format: `<tenantId>__<engagementId>__<tickTs-with-colons-replaced>` | any authed user | Admin SDK only (not client SDK) |
 | `agent_sessions/...` | Claude session metadata | engagement consultant | engagement consultant |
 | `subscriptions/{id}` | Billing | self | system |
@@ -253,7 +258,8 @@ firestore:rules` and `firestore:indexes`.
 | M3 Phase 1-3 | Kanban v1, notes, files, calendar | shipped | |
 | M3 Phase 4 (timesheets) | Pending design | pending | |
 | **M3 Phase E** | **Autonomous heartbeat (dual-tier)** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-e-autonomous-heartbeat.md` |
-| **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **in progress — F.1 spec locked, F.2-F.8 to follow** | Spec: `docs/specs/m3-phase-f-token-sync.md`. Pre-code adversarial challenge passed (3 showstoppers fixed). Tauri writes AES-256-GCM encrypted tokens to `engagements/{eid}/google_tokens/{provider}`; heartbeat reads + decrypts per-engagement via Admin SDK. |
+| **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-f-token-sync.md`. Merged bb8a506. |
+| **M3 Phase G** | **Proactive intelligence (bidirectional Telegram, voice, proactive Claude, memory)** | **G.1 spec locked, G.2-G.7 to follow** | Spec: `docs/specs/m3-phase-g-proactive-intelligence.md`. Pre-code challenge: 2 showstoppers + 7 blocks fixed. Queue-based single-writer architecture (poller writes command queue only, tick is sole writer to everything else). |
 
 ## 5. Heartbeat (Phase E) operational reference
 
@@ -462,18 +468,48 @@ it; if they're not, Telegram surfaces it" clean.
   per-bot limit — but the prompt's bias-to-no-op constraint makes
   this scenario unlikely in practice.
 
-**Future work (Phase F+)**:
-- Bi-directional Telegram: bot listens via `getUpdates` polling or
-  webhook, parses commands, mutates Firestore (e.g.
-  `/confirm <action_id>` → set `dispatchStatus: "confirmed"` on the
-  action's audit row).
-- Multi-engagement: today's single bot pushes everything. With
-  Phase F's per-engagement Firestore-synced tokens we could route
-  per-engagement pushes through different bots (or use chat ID
-  parameterised by engagement so one bot handles all).
+**Future work:**
 - Rich previews: include a deep-link to the Mac app's
   `ikrs-workspace://action/<id>` URI so tapping the notification
   opens the corresponding Kanban card.
+
+### 5.5 Bidirectional Telegram (Phase G — spec locked, implementation pending)
+
+Phase G adds a return channel: the operator can reply to the heartbeat
+via Telegram text, voice notes, or inline keyboard buttons. Full spec:
+`docs/specs/m3-phase-g-proactive-intelligence.md`.
+
+**Architecture: queue-based single-writer.** The bot poller is a
+separate systemd service (`ikrs-heartbeat-poller.service`, Type=simple,
+long-running) that calls Telegram `getUpdates` every 30 seconds. It
+writes incoming messages to a Firestore command queue at
+`engagements/{eid}/commands/{update_id}` and optionally triggers an
+ad-hoc tick via `systemctl start ikrs-heartbeat.service`. The tick
+(sole writer to `ikrs_tasks`, local files, observations) reads pending
+commands at the start of each run, processes them, and marks them
+processed in the same Firestore transaction.
+
+**Why not webhook:** Requires a public HTTPS endpoint on the VM, which
+violates the "no inbound traffic" security posture (Tailscale is
+outbound-only mesh).
+
+**Why not poller-processes-commands-directly:** Two processes writing to
+the same Firestore docs and local files creates race conditions. The
+pre-code adversarial challenge flagged this as a showstopper (#9).
+Queue-based single-writer eliminates all inter-process coordination.
+
+**Key design decisions (from adversarial challenge):**
+- `update_id` as command queue doc ID → natural idempotency on
+  Telegram re-delivery
+- Offset persisted at `/var/lib/ikrs-heartbeat/telegram-offset`
+  (atomic write) → crash recovery without replay
+- First-start backlog flush (`getUpdates(offset=-1, limit=1)`) →
+  no "24h of old DMs" storm on fresh install
+- `chat_id` allowlist validated BEFORE message body parsing
+- Voice messages: filter on `message.voice` field, size check before
+  download, `finally`-block cleanup, SHA-256 audit log, never persisted
+- Prompt injection defense: operator text wrapped in delimiters +
+  system instruction + typed action schema bounds blast radius
 
 ### 5.4 Operational runbooks
 
