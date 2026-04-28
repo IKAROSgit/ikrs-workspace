@@ -163,7 +163,7 @@ else
     read -r TENANT_ID
   fi
   if [[ -z "${ENGAGEMENT_ID:-}" ]]; then
-    printf "[install] engagement ID (e.g. blr-world): "
+    printf "[install] engagement ID (Firestore doc ID, e.g. 5L12siRpQDDXnPCk892H): "
     read -r ENGAGEMENT_ID
   fi
   if [[ -z "${FIRESTORE_PROJECT_ID:-}" ]]; then
@@ -173,9 +173,11 @@ else
   install -m 0640 -o "$IKRS_USER" -g "$IKRS_USER" /dev/null "$ETC_DIR/heartbeat.toml"
   cat > "$ETC_DIR/heartbeat.toml" <<EOF
 tenant_id = "$TENANT_ID"
-engagement_id = "$ENGAGEMENT_ID"
-vault_root = "$VAULT_ROOT"
 prompt_version = "tick_prompt.v1"
+
+[[engagements]]
+id = "$ENGAGEMENT_ID"
+vault_root = "$VAULT_ROOT"
 
 [llm]
 provider = "gemini"
@@ -236,6 +238,13 @@ if [[ -z "$TOKEN_ENCRYPTION_KEY" ]]; then
   say "generating AES-256-GCM token encryption key (Phase F)"
   TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
   TOKEN_ENCRYPTION_KEY_VERSION="1"
+  # Persist immediately so the key survives a crash before the full
+  # secrets.env rewrite below. Avoids TOCTOU: key displayed but not saved.
+  if [[ -f "$SECRETS_FILE" ]]; then
+    # Append to existing file
+    printf 'TOKEN_ENCRYPTION_KEY="%s"\nTOKEN_ENCRYPTION_KEY_VERSION="%s"\n' \
+      "$TOKEN_ENCRYPTION_KEY" "$TOKEN_ENCRYPTION_KEY_VERSION" >> "$SECRETS_FILE"
+  fi
   echo ""
   echo "================================================================"
   echo "  BACK UP THIS KEY — it encrypts all OAuth tokens in Firestore."

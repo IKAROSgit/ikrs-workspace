@@ -174,14 +174,21 @@ pub async fn get_payload_refresh_if_needed(
     })?;
 
     if payload.is_expired() {
-        // Refresh grants a new access_token; delegate to the bare
-        // `refresh_if_needed` which also updates the keychain and
-        // cache. Then re-read.
-        let new_access_token = refresh_if_needed(keychain_key, app).await?;
-        payload.access_token = new_access_token;
-        // expires_at in the struct is stale, but callers of
-        // get_payload_refresh_if_needed don't use it — they want
-        // the static client_id/secret/refresh_token values.
+        // Refresh grants a new access_token (and possibly a new
+        // refresh_token if Google rotates). Delegate to the bare
+        // `refresh_if_needed` which updates the keychain and cache.
+        // Then re-read the FULL payload from keychain to pick up
+        // any rotated refresh_token — the original `payload` is stale.
+        let _new_access_token = refresh_if_needed(keychain_key, app).await?;
+        let updated_raw = app
+            .keyring()
+            .get_password(IKRS_SERVICE, keychain_key)
+            .ok()
+            .flatten()
+            .ok_or("Token disappeared from keychain after refresh.")?;
+        payload = serde_json::from_str(&updated_raw).map_err(|_| {
+            "Keychain token corrupt after refresh.".to_string()
+        })?;
     } else {
         // Mirror `refresh_if_needed`'s cache-warm behaviour on the
         // fresh-token path so the next refresh_if_needed skips the

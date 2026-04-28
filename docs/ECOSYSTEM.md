@@ -704,7 +704,13 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
    updated for multi-engagement (F.6).
 10. **No quiet-hours config for Telegram pushes.** Spec is explicit:
     24/7 operation. Operator can mute the bot in Telegram client-side.
-11. **No automated key rotation script.** Key rotation is a manual
+11. **Tauri silent token refresh does not sync to Firestore.** When
+    Tauri's Rust backend refreshes an expired access token, the updated
+    token is written to keychain but NOT to Firestore. The heartbeat
+    always refreshes on its own (since the Firestore copy is stale).
+    This is safe but creates one extra Google API call per tick. Fixing
+    requires a Rust→JS event bridge for every refresh — deferred.
+12. **No automated key rotation script.** Key rotation is a manual
     procedure (see §5.4 runbook). A future script could iterate all
     engagement `google_tokens` docs, decrypt with old key, re-encrypt
     with new key, and update Firestore — but the manual procedure

@@ -21,11 +21,10 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from heartbeat.signals.base import CollectorError
 from heartbeat.signals.google_auth import (
-    GOOGLE_SCOPES,
     GoogleAuthFailure,
     GoogleSource,
     load_google_credentials,
@@ -37,6 +36,36 @@ if TYPE_CHECKING:
     from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger("heartbeat.signals.firestore_tokens")
+
+# Cached Firestore client, initialized lazily via _get_db().
+# typed as Any because google-cloud-firestore is untyped.
+_FS_CLIENT: Any | None = None
+
+
+def _get_db() -> Any:
+    """Return a Firestore client, initializing the Firebase app if needed.
+
+    Uses the same SA path as the outputs layer (FIREBASE_SA_KEY_PATH env var)
+    but with a dedicated named app to avoid collisions.
+    """
+    global _FS_CLIENT  # noqa: PLW0603
+    if _FS_CLIENT is not None:
+        return _FS_CLIENT
+
+    import firebase_admin
+    from firebase_admin import credentials
+    from firebase_admin import firestore as fs
+
+    sa_path = os.environ.get("FIREBASE_SA_KEY_PATH", "/etc/ikrs-heartbeat/firebase-sa.json")
+    app_name = "heartbeat-token-sync"
+    try:
+        app = firebase_admin.get_app(app_name)  # type: ignore[no-untyped-call]
+    except ValueError:
+        cred = credentials.Certificate(sa_path)  # type: ignore[no-untyped-call]
+        app = firebase_admin.initialize_app(cred, name=app_name)  # type: ignore[no-untyped-call]
+
+    _FS_CLIENT = fs.client(app=app)
+    return _FS_CLIENT
 
 
 @dataclass(frozen=True)
@@ -130,10 +159,7 @@ def _read_firestore_token(
 
     key_bytes, key_version = key_info
 
-    # Import here to avoid pulling in firebase_admin at module level
-    from firebase_admin import firestore as fs
-
-    db = fs.client()
+    db = _get_db()
     ref = db.document(f"engagements/{engagement_id}/google_tokens/google")
     snap = ref.get()
 
@@ -260,10 +286,9 @@ def _refresh_and_writeback(
         })
         ct_b64, iv_b64 = _encrypt(plaintext, key_bytes)
 
-        from firebase_admin import firestore as fs
         from google.cloud.firestore import SERVER_TIMESTAMP
 
-        db = fs.client()
+        db = _get_db()
         ref = db.document(f"engagements/{engagement_id}/google_tokens/google")
 
         # Optimistic concurrency: re-read, skip if doc changed
@@ -293,13 +318,17 @@ def _payload_to_credentials(payload: TokenPayload) -> Credentials:
     """Convert a TokenPayload to google.oauth2.credentials.Credentials."""
     from google.oauth2.credentials import Credentials
 
+    # Do NOT pass scopes= here. Tauri grants broader scopes (gmail.modify,
+    # calendar.events) than the heartbeat's GOOGLE_SCOPES (readonly). If we
+    # declare readonly scopes, google-auth may send them during auto-refresh,
+    # which can trigger a "scope changed" error from Google. Omitting scopes
+    # lets the Credentials object use whatever scopes were originally granted.
     return Credentials(  # type: ignore[no-untyped-call]
         token=payload.access_token,
         refresh_token=payload.refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=payload.client_id,
         client_secret=payload.client_secret,
-        scopes=GOOGLE_SCOPES,
     )
 
 
