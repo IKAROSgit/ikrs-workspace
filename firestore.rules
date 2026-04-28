@@ -82,6 +82,15 @@ service cloud.firestore {
         && resource.data.consultantId == request.auth.uid;
       allow create: if request.auth != null
         && request.resource.data.consultantId == request.auth.uid;
+
+      // Phase F: per-engagement encrypted OAuth tokens. Written by
+      // Tauri (client SDK, owning consultant) and heartbeat (Admin SDK,
+      // bypasses rules). Read by the owning consultant for status display.
+      match /google_tokens/{provider} {
+        allow read, write: if request.auth != null
+          && get(/databases/$(database)/documents/engagements/$(engagementId))
+               .data.consultantId == request.auth.uid;
+      }
     }
 
     // ikrs-workspace tasks — NAMESPACED (`ikrs_tasks`) to avoid the

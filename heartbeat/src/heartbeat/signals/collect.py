@@ -46,6 +46,7 @@ def collect_signals(
             token_path=token_path,
             now=now,
             lookahead_hours=config.signals.calendar_lookahead_hours,
+            engagement_id=config.engagement_id,
         )
         if cal_error is not None:
             bundle = _with_error(bundle, cal_error)
@@ -57,6 +58,7 @@ def collect_signals(
             token_path=token_path,
             now=now,
             lookback_hours=config.signals.gmail_lookback_hours,
+            engagement_id=config.engagement_id,
         )
         if gmail_error is not None:
             bundle = _with_error(bundle, gmail_error)

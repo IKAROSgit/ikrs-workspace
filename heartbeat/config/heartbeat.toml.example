@@ -7,14 +7,29 @@
 # and audit log namespace.
 tenant_id = "moe-ikaros-ae"
 
-# Required. Per-engagement identifier — same value as engagement.id in the
-# Tauri app's engagement registry.
-engagement_id = "blr-world"
+# ── Engagements (Phase F) ──────────────────────────────────────────────
+# Each [[engagements]] entry defines one engagement the heartbeat monitors.
+# The tick orchestrator runs once per engagement per hour with error isolation.
+#
+# `id` must match the Firestore document ID in engagements/{id}.
+# `vault_root` is the absolute path to the engagement vault on the VM.
 
-# Required. Absolute path to the engagement vault on the VM. The installer
-# offers to clone the operator's vault from a private remote, or to create
-# an empty one.
-vault_root = "/home/ikrs/vaults/blr-world"
+[[engagements]]
+id = "5L12siRpQDDXnPCk892H"
+vault_root = "/home/moe_ikaros_ae/vaults/blr-world"
+
+# Add more engagements as needed:
+# [[engagements]]
+# id = "another-engagement-uid"
+# vault_root = "/home/moe_ikaros_ae/vaults/another-client"
+
+# ── Legacy single-engagement format (deprecated) ──────────────────────
+# If [[engagements]] is absent, these flat fields are used instead.
+# The heartbeat auto-wraps them into a single-element array and logs a
+# deprecation warning. Migrate to [[engagements]] when convenient.
+#
+# engagement_id = "blr-world"
+# vault_root = "/home/ikrs/vaults/blr-world"
 
 # Optional. Defaults to "tick_prompt.v1". Bump when the prompt template
 # changes to keep telemetry comparable across versions.
@@ -43,4 +58,4 @@ telegram_enabled = true
 audit_enabled = true
 # Required when firestore_enabled = true. Same Firebase project as the Tauri
 # app (single-project posture in v5; per-tenant projects deferred to Phase F).
-firestore_project_id = "ikrs-workspace-prod"
+firestore_project_id = "ikaros-portal"

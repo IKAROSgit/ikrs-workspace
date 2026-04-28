@@ -51,6 +51,7 @@ def _write_minimal_config(tmp_path: Path, *, with_firestore_id: bool = True) -> 
 
 
 def test_load_config_happy_path(tmp_path: Path) -> None:
+    """Legacy single-engagement format still works."""
     cfg_path = _write_minimal_config(tmp_path)
     cfg = load_config(cfg_path)
     assert isinstance(cfg, HeartbeatConfig)
@@ -60,6 +61,67 @@ def test_load_config_happy_path(tmp_path: Path) -> None:
     assert cfg.outputs.telegram_enabled is False
     # Relative audit_log_path resolves under vault_root by default.
     assert cfg.audit_log_path == cfg.vault_root / "_memory/heartbeat-log.jsonl"
+    # Legacy format auto-wraps into single-element engagements list
+    assert len(cfg.engagements) == 1
+    assert cfg.engagements[0].id == "blr-world"
+    assert cfg.engagements[0].vault_root == cfg.vault_root
+
+
+def test_load_config_engagements_array(tmp_path: Path) -> None:
+    """Phase F [[engagements]] array format."""
+    vault_a = tmp_path / "vault-a"
+    vault_b = tmp_path / "vault-b"
+    vault_a.mkdir()
+    vault_b.mkdir()
+    cfg_path = tmp_path / "heartbeat.toml"
+    cfg_path.write_text(
+        textwrap.dedent(
+            f"""\
+            tenant_id = "moe-ikaros-ae"
+            prompt_version = "tick_prompt.v1"
+
+            [[engagements]]
+            id = "eng-aaa"
+            vault_root = "{vault_a}"
+
+            [[engagements]]
+            id = "eng-bbb"
+            vault_root = "{vault_b}"
+
+            [llm]
+            provider = "gemini"
+
+            [outputs]
+            firestore_enabled = true
+            firestore_project_id = "ikrs-test"
+            """
+        )
+    )
+    cfg = load_config(cfg_path)
+    assert len(cfg.engagements) == 2
+    assert cfg.engagements[0].id == "eng-aaa"
+    assert cfg.engagements[1].id == "eng-bbb"
+    # First engagement becomes the default
+    assert cfg.engagement_id == "eng-aaa"
+    assert cfg.vault_root == vault_a.resolve()
+
+
+def test_load_config_engagements_missing_id(tmp_path: Path) -> None:
+    """[[engagements]] entry without id is rejected."""
+    cfg_path = tmp_path / "heartbeat.toml"
+    cfg_path.write_text(
+        textwrap.dedent(
+            f"""\
+            tenant_id = "x"
+            [[engagements]]
+            vault_root = "{tmp_path}/v"
+            [outputs]
+            firestore_project_id = "p"
+            """
+        )
+    )
+    with pytest.raises(ValueError, match="engagements.*id is required"):
+        load_config(cfg_path)
 
 
 def test_load_config_missing_file(tmp_path: Path) -> None:
@@ -70,7 +132,7 @@ def test_load_config_missing_file(tmp_path: Path) -> None:
 def test_load_config_missing_required_keys(tmp_path: Path) -> None:
     cfg_path = tmp_path / "broken.toml"
     cfg_path.write_text('tenant_id = "x"\n')  # missing engagement_id, vault_root
-    with pytest.raises(ValueError, match="missing required keys"):
+    with pytest.raises(ValueError, match="missing required key"):
         load_config(cfg_path)
 
 

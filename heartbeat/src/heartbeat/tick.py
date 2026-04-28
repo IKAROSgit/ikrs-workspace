@@ -67,6 +67,8 @@ _RECENT_ACTION_ID_WINDOW = 50
 # any signal-collector error.
 _ERROR_PRECEDENCE: dict[str, int] = {
     "oauth_refresh_failed": 90,
+    "key_version_unknown": 85,    # Phase F: operator must update encryption key
+    "token_decrypt_failed": 85,   # Phase F: encryption key mismatch or corrupt doc
     "missing_token": 80,
     "vault_root_missing": 70,
     "api_call_failed": 60,

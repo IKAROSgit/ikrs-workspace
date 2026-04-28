@@ -9,9 +9,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from heartbeat.config import HeartbeatConfig, load_config
+from heartbeat.config import EngagementConfig, HeartbeatConfig, load_config
 from heartbeat.outputs import DispatchResult, OutputSecrets, dispatch_outputs
 from heartbeat.tick import TickResult, run_tick
 
@@ -105,12 +106,32 @@ def _log_tick_summary(result: TickResult) -> None:
         logger.info("collector error: %s/%s — %s", err.source, err.error_code, err.message)
 
 
+def _config_for_engagement(
+    base: HeartbeatConfig, eng: EngagementConfig
+) -> HeartbeatConfig:
+    """Derive a per-engagement config from the base config.
+
+    Swaps engagement_id, vault_root, and audit_log_path to point at
+    this engagement's vault. All other settings (LLM, signals, outputs)
+    are shared across engagements.
+    """
+    audit_log_path = eng.vault_root / "_memory" / "heartbeat-log.jsonl"
+    return replace(
+        base,
+        engagement_id=eng.id,
+        vault_root=eng.vault_root,
+        audit_log_path=audit_log_path,
+    )
+
+
 def _print_dry_run_plan(config: HeartbeatConfig) -> None:
     """Print what a real tick *would* do, without doing it."""
 
     logger.info("DRY RUN — no network calls, no writes.")
-    logger.info("tenant_id=%s engagement_id=%s", config.tenant_id, config.engagement_id)
-    logger.info("vault_root=%s", config.vault_root)
+    logger.info("tenant_id=%s", config.tenant_id)
+    logger.info("engagements (%d):", len(config.engagements))
+    for eng in config.engagements:
+        logger.info("  - id=%s vault_root=%s", eng.id, eng.vault_root)
     logger.info("llm.provider=%s llm.model=%s", config.llm.provider, config.llm.model)
     logger.info("prompt_version=%s", config.prompt_version)
     logger.info(
@@ -139,18 +160,30 @@ def main(argv: list[str] | None = None) -> int:
         _print_dry_run_plan(config)
         return 0
 
-    # E.4: produce the tick. E.5: dispatch its outputs.
-    result = run_tick(config, token_path=args.token_path)
-    _log_tick_summary(result)
-
+    # Phase F: iterate engagements. Each engagement gets its own tick +
+    # dispatch cycle with error isolation — one broken engagement must
+    # not block others.
     secrets = OutputSecrets.from_env()
-    dispatch = dispatch_outputs(config, secrets, result, tier="II")
-    _log_dispatch_summary(dispatch)
+    any_error = False
 
-    # Tick is "successful" if the LLM call landed; dispatch errors are
-    # logged separately but don't push exit-code to non-zero (the audit
-    # log captures everything for ops). Only a hard tick error returns 1.
-    return 0 if result.status in {"ok", "no-op"} else 1
+    for eng in config.engagements:
+        eng_config = _config_for_engagement(config, eng)
+        logger.info("--- engagement %s (vault: %s) ---", eng.id, eng.vault_root)
+
+        try:
+            result = run_tick(eng_config, token_path=args.token_path)
+            _log_tick_summary(result)
+
+            dispatch = dispatch_outputs(eng_config, secrets, result, tier="II")
+            _log_dispatch_summary(dispatch)
+
+            if result.status not in {"ok", "no-op"}:
+                any_error = True
+        except Exception:
+            logger.exception("Unhandled error for engagement %s", eng.id)
+            any_error = True
+
+    return 1 if any_error else 0
 
 
 if __name__ == "__main__":  # pragma: no cover
