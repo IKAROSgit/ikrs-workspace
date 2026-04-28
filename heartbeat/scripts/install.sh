@@ -269,6 +269,18 @@ if [[ -n "$VAULT_ROOT_FROM_TOML" ]]; then
     sed -i "/^ReadWritePaths=\/var\/lib\/ikrs-heartbeat/a ReadWritePaths=$VAULT_ROOT_FROM_TOML" \
       "$SYSTEMD_DIR/ikrs-heartbeat.service"
   fi
+
+  # If vault is under /home/*, ProtectHome=true would hide it from the
+  # service entirely (systemd namespace isolation overrides
+  # ReadWritePaths and filesystem perms). Flip ProtectHome=false in that
+  # case so the heartbeat can read+write the vault. For vaults outside
+  # /home (e.g. /var/lib/...), keep ProtectHome=true for tighter
+  # isolation.
+  if [[ "$VAULT_ROOT_FROM_TOML" == /home/* ]]; then
+    say "vault is under /home/ — relaxing ProtectHome=true → ProtectHome=false"
+    sed -i 's|^ProtectHome=true|ProtectHome=false|' \
+      "$SYSTEMD_DIR/ikrs-heartbeat.service"
+  fi
 fi
 
 systemctl daemon-reload
