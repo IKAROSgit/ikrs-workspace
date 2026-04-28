@@ -6,18 +6,12 @@ If any of these regress, the corresponding showstopper/block is back.
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from heartbeat.signals.base import CollectorError
 from heartbeat.tick import _ERROR_PRECEDENCE, _pick_error_code
-
 
 # ---------------------------------------------------------------------------
 # F.7 fix #1: _get_db() must use a NAMED firebase app, not the default.

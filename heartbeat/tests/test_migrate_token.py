@@ -7,16 +7,12 @@ Firebase Admin SDK is mocked — no real Firestore calls.
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-# The script lives outside the package, so import it by path.
-import importlib.util
 
 _SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "migrate-token-to-firestore.py"
 _spec = importlib.util.spec_from_file_location("migrate_script", _SCRIPT_PATH)
