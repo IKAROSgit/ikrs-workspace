@@ -15,7 +15,8 @@ from heartbeat.signals.base import (
     CalendarSignal,
     CollectorError,
 )
-from heartbeat.signals.google_auth import GoogleAuthFailure, load_google_credentials
+from heartbeat.signals.firestore_tokens import load_credentials
+from heartbeat.signals.google_auth import GoogleAuthFailure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +29,7 @@ def collect_calendar(
     token_path: Path,
     now: datetime,
     lookahead_hours: int,
+    engagement_id: str = "",
     _service: Any | None = None,
 ) -> tuple[CalendarSignal | None, CollectorError | None]:
     """Run one calendar collection.
@@ -43,7 +45,7 @@ def collect_calendar(
     try:
         if _service is None:
             try:
-                creds = load_google_credentials(token_path, source="calendar")
+                creds = load_credentials(engagement_id, token_path, source="calendar")
             except GoogleAuthFailure as exc:
                 return None, exc.error
 

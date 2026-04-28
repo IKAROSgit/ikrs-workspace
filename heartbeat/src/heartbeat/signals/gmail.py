@@ -18,7 +18,8 @@ from heartbeat.signals.base import (
     EmailThread,
     GmailSignal,
 )
-from heartbeat.signals.google_auth import GoogleAuthFailure, load_google_credentials
+from heartbeat.signals.firestore_tokens import load_credentials
+from heartbeat.signals.google_auth import GoogleAuthFailure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,6 +39,7 @@ def collect_gmail(
     token_path: Path,
     now: datetime,
     lookback_hours: int,
+    engagement_id: str = "",
     _service: Any | None = None,
 ) -> tuple[GmailSignal | None, CollectorError | None]:
     """Run one gmail collection.
@@ -49,7 +51,7 @@ def collect_gmail(
     try:
         if _service is None:
             try:
-                creds = load_google_credentials(token_path, source="gmail")
+                creds = load_credentials(engagement_id, token_path, source="gmail")
             except GoogleAuthFailure as exc:
                 return None, exc.error
 

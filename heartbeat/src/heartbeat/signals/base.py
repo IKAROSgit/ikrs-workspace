@@ -22,6 +22,8 @@ ErrorCode = Literal[
     "api_call_failed",
     "vault_root_missing",
     "vault_io_error",
+    "key_version_unknown",    # Phase F: encryption key version mismatch
+    "token_decrypt_failed",   # Phase F: AES-GCM decrypt failure
 ]
 
 
