@@ -212,8 +212,14 @@ def test_write_kanban_task_serialises_full_doc(tmp_path: Path) -> None:
     assert doc["tags"] == ["heartbeat", "tier-ii"]
     assert doc["subtasks"] == []
     assert doc["source"] == "claude"
-    assert doc["createdAt"] == "2026-04-25T12:00:00+00:00"
-    assert doc["updatedAt"] == "2026-04-25T12:00:00+00:00"
+    # Per commit 5c018dd: createdAt/updatedAt are Python datetime
+    # objects, not ISO strings — the Admin SDK serialises datetime
+    # to a Firestore Timestamp, which the Tauri client SDK reads
+    # back as a JS Date. Writing strings broke the Kanban reader.
+    assert isinstance(doc["createdAt"], datetime)
+    assert doc["createdAt"].isoformat() == "2026-04-25T12:00:00+00:00"
+    assert isinstance(doc["updatedAt"], datetime)
+    assert doc["updatedAt"].isoformat() == "2026-04-25T12:00:00+00:00"
     # Heartbeat-specific extras (not on Tauri's Task type but harmless):
     assert doc["tenantId"] == "moe"
     assert doc["rationale"] == "board meeting tomorrow"
