@@ -89,8 +89,13 @@ an immediate tick via `sudo systemctl start ikrs-heartbeat.service`.
 Rate limited to max 1 ad-hoc start per 10 seconds. State held in
 `/var/lib/ikrs-heartbeat/last-trigger.timestamp` (atomic write, read
 mtime). Excess triggers are silently skipped — the command is still
-queued and will be processed on the next scheduled hourly tick. If
-the service is already running, systemd no-ops the start call.
+queued and will be processed on the next scheduled hourly tick.
+
+**Verified on elara-vm (2026-04-28):** `systemctl start` on a running
+`Type=oneshot` service is QUEUED by systemd and runs immediately after
+the in-flight tick exits. Both calls return exit code 0. End-to-end
+latency of operator commands is bounded by a single tick duration
+(~10-15s) plus any queue time if a tick is already running.
 
 **Sudoers entry** — specific, not blanket. Dropped into
 `/etc/sudoers.d/ikrs-heartbeat` with mode `0440`:
@@ -414,6 +419,37 @@ System instruction at the top of every prompt:
 | Bot poller ↔ tick | Race conditions | Queue-based single-writer: poller writes queue only, tick is sole writer to everything else |
 | Memory distillation | Stale patterns | 24-tick cycle with "remove contradicted" instruction |
 | Memory distillation | Cost invisible | `distillation_tokens_used` in heartbeat_health + monthly usage doc |
+
+### Risk acceptance: prompt injection
+
+This is a documented, intentional posture — not a gap.
+
+**Delimiters are best-effort.** The `OPERATOR_REPLY_DATA` delimiters
+around operator-supplied content are a defense layer, not a guarantee.
+A determined attacker can craft payloads that convince the LLM to
+ignore delimiter instructions. We accept this because:
+
+**The actual safety boundary is the typed-action schema.** Gemini can
+only emit `KanbanTaskAction`, `MemoryUpdateAction`, `TelegramPushAction`,
+or `OperatorQuestionAction`. None of these can execute arbitrary code,
+send arbitrary HTTP requests, read arbitrary files, or modify anything
+outside Firestore. The blast radius of a successful prompt injection
+is: "Gemini emits a malicious-but-typed action to Firestore." The
+operator sees every action in their Kanban board, audit log, and
+Telegram before it has any effect outside the system.
+
+**Residual risk:** An attacker with Telegram access could cause Gemini
+to create misleading Kanban tasks, poison `patterns.md` memory via
+crafted observations, or send confusing Telegram pushes. All of these
+are visible to the operator and reversible.
+
+**Future-proofing:** If destructive action types are added in later
+phases (e.g., `SendEmailAction`, `ExecuteScriptAction`), they MUST
+implement confidence-tiered confirmation: auto-execute only after the
+operator has explicitly green-lit the same action pattern N times.
+Until that confirmation threshold is met, the action sits in
+`awaiting_confirmation` status and the operator must manually approve
+via Telegram or the Mac app.
 
 ## G.2 test plan (minimum 12 tests)
 
