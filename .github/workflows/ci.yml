@@ -9,6 +9,20 @@ on:
     branches: [main]
 
 jobs:
+  # Enforces docs/ECOSYSTEM.md updates for any change touching
+  # architecture, secrets, schema, scheduling, or runbooks.
+  # See scripts/check-ecosystem-docs.sh for the rule.
+  ecosystem-docs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the merge-base, so fetch full history of both refs.
+          fetch-depth: 0
+      - name: Verify docs/ECOSYSTEM.md updated for sensitive changes
+        run: bash scripts/check-ecosystem-docs.sh "origin/${{ github.base_ref }}" HEAD
+
   lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:

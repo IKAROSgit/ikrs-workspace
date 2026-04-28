@@ -2,7 +2,19 @@
 
 Desktop app for IKAROS consultants working against external clients. Embeds Claude Code, connects Gmail / Calendar / Drive / Obsidian through MCP servers per engagement, tracks time + productivity, gives line managers visibility. Tauri + React + TypeScript; runs on macOS (primary), Windows / Linux (secondary).
 
-Status: **M1 complete, M2 Phase 4b complete, Phase 4c (release readiness) in progress.** Daily use via ad-hoc signing is supported now; distributable signed DMG is blocked on Apple Developer enrolment.
+> ## 📚 Read this before changing anything
+>
+> **`docs/ECOSYSTEM.md`** is the canonical reference for architecture,
+> identity, file locations (Mac / VM / GitHub / Firestore), Firestore
+> schema, runbooks, and phase status.
+>
+> AI agents: see **`CLAUDE.md`** + **`AGENTS.md`** at repo root for the
+> non-negotiable rule — read `docs/ECOSYSTEM.md` first; update it in the
+> same commit as any change to architecture / secrets / schema /
+> scheduling / runbooks. CI enforces this via
+> `scripts/check-ecosystem-docs.sh`.
+
+Status: **M1 complete, M2 Phase 4b complete, Phase 4c (release readiness) in progress.** M3 Phase E (autonomous heartbeat, dual-tier) shipped and soaking on `elara-vm`. Phase F (multi-engagement OAuth via Firestore-synced tokens) pending design. Daily use via ad-hoc signing is supported now; distributable signed DMG is blocked on Apple Developer enrolment.
 
 ## Daily Use (No Apple Developer Cert Required)
 

@@ -1,0 +1,485 @@
+# IKAROS Workspace — Ecosystem & Architecture Reference
+
+**This is the canonical doc.** Every AI agent and human contributor MUST
+read this before making changes, and MUST update it in the same commit
+when changes touch architecture, secrets, identity, schema, runbooks,
+or phase status. See **`CLAUDE.md`** + **`AGENTS.md`** at repo root for
+the enforcement rule.
+
+> "If you didn't update ECOSYSTEM.md, you didn't finish the work."
+
+Last verified: see `git log -1 -- docs/ECOSYSTEM.md`. If the most recent
+commit to a file in this list pre-dates an architecture-touching commit
+elsewhere, this doc is stale and trusting it is unsafe.
+
+---
+
+## 0. What is IKAROS Workspace?
+
+IKAROS Workspace is a consultant's professional desktop tool: a Tauri 2
+app (Rust + React + TypeScript) running on the consultant's Mac that
+gives them per-engagement vaults, a Kanban + notes UI, embedded Claude
+Code subprocess sessions, MCP servers for Gmail/Calendar/Drive/Obsidian,
+and an autonomous heartbeat agent that runs 24/7 (split between in-app
+Claude when human-present and an on-VM Gemini service when the human is
+away).
+
+Designed for a single operator to start, but **commercially template-
+ready** — each consultant gets their own VM, their own Gemini paid-tier
+subscription, and the same code clone-and-go.
+
+## 1. Big-picture architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Mac (operator's laptop)                                          │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  IKAROS Workspace.app (Tauri 2)                            │  │
+│  │                                                            │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌─────────────────────────┐  │  │
+│  │  │ React UI │  │ Rust core│  │ Tier I heartbeat        │  │  │
+│  │  │ (vite)   │←→│ (tokio)  │→→│ (tokio interval, hourly │  │  │
+│  │  │          │  │          │  │  while app open)        │  │  │
+│  │  └─────┬────┘  └─────┬────┘  └────────────┬────────────┘  │  │
+│  │        │             │                    │               │  │
+│  │        ↓             ↓                    ↓ emits         │  │
+│  │  ┌────────────────────────────────────────────────────┐   │  │
+│  │  │ Claude Code subprocess (per-engagement)            │   │  │
+│  │  └────────────────────────────────────────────────────┘   │  │
+│  └────────────┬───────────────┬──────────────────────────────┘  │
+│               │               │                                 │
+│        OAuth tokens     vault filesystem                        │
+│        (keychain)       (~/.ikrs-workspace/vaults/)             │
+└─────────────┬─────────────────┬─────────────────────────────────┘
+              │                 │ scp + ssh                        
+              │                 ↓                                 
+              │     ┌──────────────────────────────────────┐      
+              │     │ elara-vm (Debian, on Tailscale)      │      
+              │     │                                      │      
+              │     │  ┌────────────────────────────────┐  │      
+              │     │  │ Tier II heartbeat (Python)     │  │      
+              │     │  │ systemd timer, hourly 24/7     │  │      
+              │     │  │ Gmail + Calendar + Vault →     │  │      
+              │     │  │ Gemini → Firestore + Telegram  │  │      
+              │     │  └────────────────────────────────┘  │      
+              │     └──────────────────────────────────────┘      
+              ↓                                                   
+   ┌─────────────────────────────────────┐                        
+   │ Firebase / Firestore (ikaros-portal)│                        
+   │                                     │                        
+   │  consultants, clients, engagements, │                        
+   │  ikrs_tasks, taskNotes,             │                        
+   │  heartbeat_health (Tier II writes,  │                        
+   │  Tier I reads + verifies)           │                        
+   └─────────────────────────────────────┘                        
+```
+
+Three layers:
+- **Tauri app** — operator's UI, OAuth, Claude session host, vault writer.
+- **Tier I (in-app heartbeat)** — runs while app is open. Verifies Tier
+  II's writes via Firestore listeners and surfaces a status pill in
+  Settings. Doesn't write to Firestore itself.
+- **Tier II (on-VM heartbeat)** — runs hourly via systemd, 24/7. Reads
+  email/calendar/vault, calls Gemini for triage, writes typed actions
+  back to Firestore + sends Telegram pushes.
+
+This split exists because Anthropic's Consumer Terms forbid unattended
+Claude use, but Gemini's paid tier explicitly permits commercial /
+non-human use. So we use Claude when the human is present and Gemini
+when they're not.
+
+## 2. Identity model
+
+Three identity contexts, all distinct:
+
+| Identity | Where | Purpose |
+|---|---|---|
+| **Consultant** (Firebase Auth UID) | Tauri app login, Firestore docs | The operator's primary identity. Owns engagements. |
+| **Client portal user** (Firebase Auth UID) | Optional, separate login | If a client gives the consultant a user account inside their org's Google Workspace, that becomes a separate Firebase Auth UID. NOT used for Tauri-app login normally. |
+| **Service account** (Firebase Admin SDK JSON) | VM only, `/etc/ikrs-heartbeat/firebase-sa.json` | The Tier II heartbeat writes via this. Bypasses client SDK rules. |
+
+### Current production identities
+
+- **Consultant**: `moe@ikaros.ae` → UID `yenifG1QiwVZtgNo42zaoSCPRTx1`
+- **Client portal**: `moe@blr-world.com` → UID `BBxieDr3PqNn6hXQNbVuMirBdDF2`
+- **Service account**: scoped to `ikaros-portal` Firebase project; key
+  at `/etc/ikrs-heartbeat/firebase-sa.json` on elara-vm.
+
+### Engagements (Firestore `engagements/{id}`)
+
+Each engagement has `consultantId` pointing at a consultant's Firebase
+Auth UID. The Tauri app filters `engagements` by
+`where consultantId == request.auth.uid`. **Mismatched consultantId
+makes the engagement invisible to the operator.**
+
+- BLR World retainer: `5L12siRpQDDXnPCk892H` (consultantId =
+  `yenifG1Q...` after Phase E remediation)
+
+## 3. Where everything lives
+
+### 3.1 Mac filesystem
+
+| Path | Purpose | Owner |
+|---|---|---|
+| `/Applications/IKAROS Workspace.app` | Installed Tauri app | Operator install |
+| `~/projects/apps/ikrs-workspace/` | Source repo (developer machine path) | Operator |
+| `~/projects/apps/ikrs-workspace/.env.local` | Firebase config (gitignored) | Operator, never committed |
+| `~/.ikrs-workspace/vaults/<engagement-slug>/` | Per-engagement vault (markdown + assets) | Operator |
+| `~/.local/bin/claude` (or other resolved path) | Claude Code CLI, used by Tauri's subprocess feature | Anthropic, installed via `npm i -g @anthropic-ai/claude-code` or similar |
+| Mac keychain (entries `IKAROS Workspace://oauth/{engagementId}/google`) | Per-engagement Google OAuth tokens | Tauri app via tauri-plugin-keyring |
+| `~/projects/apps/ikrs-workspace/heartbeat/.venv/` | Python 3.12+ venv (for one-time OAuth bootstrap on Mac) | Operator |
+| `~/projects/apps/ikrs-workspace/heartbeat/token.json` | OAuth token freshly minted by `oauth_bootstrap`, before scp to VM. **Delete after scp.** | Transient |
+| `~/.claude/` | Claude Code's per-machine settings + session storage | Anthropic |
+
+### 3.2 VM filesystem (elara-vm, Debian)
+
+| Path | Purpose | Mode | Owner |
+|---|---|---|---|
+| `~/projects/apps/ikrs-workspace/` | Code mirror (cloned from GitHub, on `main`) | 0755 | `moe_ikaros_ae` |
+| `/etc/ikrs-heartbeat/heartbeat.toml` | Non-secret config (tenant_id, engagement_id, vault_root, LLM knobs) | 0640 | `ikrs:ikrs` |
+| `/etc/ikrs-heartbeat/secrets.env` | Secret env vars: `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `FIREBASE_SA_KEY_PATH` | 0600 | `ikrs:ikrs` |
+| `/etc/ikrs-heartbeat/firebase-sa.json` | Firebase Admin SDK service account JSON | 0600 | `ikrs:ikrs` |
+| `/etc/ikrs-heartbeat/google-token.json` | OAuth token (Phase E v1: single account; Phase F: replaced by Firestore-synced tokens) | 0600 | `ikrs:ikrs` |
+| `/var/lib/ikrs-heartbeat/` | Reserved for state (currently unused; state lives in vault) | 0750 | `ikrs:ikrs` |
+| `/opt/ikrs-heartbeat/venv/` | Python venv with heartbeat package + deps | 0755 | `ikrs:ikrs` |
+| `/etc/systemd/system/ikrs-heartbeat.service` | systemd unit (Type=oneshot) | 0644 | `root:root` |
+| `/etc/systemd/system/ikrs-heartbeat.timer` | systemd timer (OnUnitActiveSec=1h, Persistent) | 0644 | `root:root` |
+| `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-state.json` | TickState (last_tick_ts, last_action_summaries, last_vault_mtimes, ...) | 0600 | `ikrs:ikrs` |
+| `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-log.jsonl` | Append-only audit log: 1 line per tick + 1 line per action | 0644 | `ikrs:ikrs` |
+
+VM accessed via Tailscale (`100.89.160.3` mapped to alias `elara-vm`).
+SSH user: `moe_ikaros_ae`. Tailscale identity: `moe@ikaros.ae`. Sudo
+works without password.
+
+### 3.3 GitHub (IKAROSgit/ikrs-workspace)
+
+- Main branch is the source of truth — both Mac and VM clone here.
+- Phase work happens on `phase-X-...` branches, merged to main.
+- GitHub email privacy is enabled on the operator's account; commits
+  are authored as `IKAROSgit@users.noreply.github.com` to avoid
+  rejection.
+- CI: `.github/workflows/ci.yml` (lint, types, tests for JS/Rust/Python
+  + a `test-heartbeat` job for the Python lane).
+- Releases: tagged `vX.Y.Z`, build via `tauri-action`. Mac app is
+  ad-hoc-signed (no notarization yet).
+
+### 3.4 Firebase (project `ikaros-portal`)
+
+| Collection | Purpose | Reader | Writer |
+|---|---|---|---|
+| `consultants/{uid}` | Consultant profile (name, role, prefs) | self | self |
+| `clients/{id}` | Client orgs | authed | authed |
+| `engagements/{id}` | Engagement record (consultantId, clientId, vault refs) | engagement consultant + client portal | engagement consultant |
+| `ikrs_tasks/{taskId}` | Kanban tasks (manual + heartbeat-emitted). NOT to be confused with `tasks/` (Mission Control) | engagement consultant + clients with engagement access | engagement consultant + Tier II Admin SDK |
+| `taskNotes/{noteId}` | Per-task notes | engagement consultant | engagement consultant |
+| `taskNotes/{noteId}/shareEvents/{eventId}` | Append-only audit of share state changes | engagement consultant + clients | engagement consultant + clients |
+| `heartbeat_health/{tickId}` | Tier II telemetry, 30-day TTL via `expiresAt`. Tick ID format: `<tenantId>__<engagementId>__<tickTs-with-colons-replaced>` | any authed user | Admin SDK only (not client SDK) |
+| `agent_sessions/...` | Claude session metadata | engagement consultant | engagement consultant |
+| `subscriptions/{id}` | Billing | self | system |
+| `onboarding/{id}` | Onboarding flow state | self | self |
+| `timesheetSubmissions/{id}` + `events/{id}` subcollection | Timesheet submission + audit | consultant + client | consultant + client |
+| `tasks/{id}` | **Mission Control** namespace, NOT used by ikrs-workspace. Reserved for IKAROS staff via `isIkarosStaff()` rule. | IKAROS staff | IKAROS staff |
+| `agents/{id}` | Mission Control agents | IKAROS staff | IKAROS staff |
+
+Rules: `firestore.rules` at repo root. Indexes:
+`firestore.indexes.json` (currently the heartbeat_health composite
+index). Both deployed via `npx firebase-tools deploy --only
+firestore:rules` and `firestore:indexes`.
+
+## 4. Phase status
+
+| Phase | Title | Status | Notes |
+|---|---|---|---|
+| M1 | Auth + onboarding + engagements | shipped | |
+| M2 | Vaults + Claude subprocess + MCP servers | shipped | |
+| M3 Phase 1-3 | Kanban v1, notes, files, calendar | shipped | |
+| M3 Phase 4 (timesheets) | Pending design | pending | |
+| **M3 Phase E** | **Autonomous heartbeat (dual-tier)** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-e-autonomous-heartbeat.md` |
+| **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **pending design + implementation** | Spec to be drafted at `docs/specs/m3-phase-f-token-sync.md`. Triggered by the architectural limit found during Phase E soak: heartbeat reads only one inbox at a time. |
+
+## 5. Heartbeat (Phase E) operational reference
+
+### 5.1 Tier II tick pipeline (per fire)
+
+1. Read state from `<vault_root>/_memory/heartbeat-state.json` (or
+   `TickState()` defaults if missing). Schema migration via
+   append-only `_MIGRATIONS` dict.
+2. Collect signals (`heartbeat.signals.collect.collect_signals`):
+   - **Calendar** — primary calendar, next-N-hours window via
+     `calendar.events.list`. Uses OAuth from
+     `/etc/ikrs-heartbeat/google-token.json`.
+   - **Gmail** — search `(is:unread OR is:starred) after:<cutoff>`,
+     last-N-hours, capped at 25 threads/tick. Same OAuth.
+   - **Vault** — recursive walk of `vault_root`, mtime diff vs
+     `state.last_vault_mtimes`. Hard symlink guard (post-E.3 fix);
+     ignore set: `.git`, `.obsidian`, `_memory`, `node_modules`,
+     etc.; hard cap of 200 changed files in prompt rendering.
+   - Errors per collector fold into `bundle.errors` — never raises.
+3. Render prompt (`heartbeat.prompts.render_tick_prompt`) using
+   `heartbeat/src/heartbeat/prompts/tick_prompt_v1.txt`. Threads
+   `last_action_summaries` (natural-language one-liners, NOT opaque
+   IDs) for dedupe context.
+4. Call LLM (`heartbeat.llm.gemini.GeminiClient`) with
+   `response_mime_type="application/json"` and
+   `response_json_schema=TICK_RESPONSE_SCHEMA`. Currently
+   `gemini-2.5-pro`. ~3000 tokens/tick (steady state).
+5. Parse JSON → typed actions (`KanbanTaskAction`,
+   `MemoryUpdateAction`, `TelegramPushAction`). Re-key IDs to fresh
+   UUIDs server-side. Stamp `emitted_at`.
+6. Save state atomically via mkstemp + fsync + os.replace.
+7. Dispatch (`heartbeat.outputs.dispatch.dispatch_outputs`):
+   - **KanbanTask** → `ikrs_tasks/{action.id}` (Firestore, namespaced
+     to NOT collide with Mission Control's `tasks/`). Doc shape
+     mirrors Tauri `Task` type (`src/types/index.ts:99`); priority
+     mapped {urgent→p1, high→p2, medium→p3, low→p3}; status =
+     "backlog"; source = "claude". `createdAt`/`updatedAt` are
+     Python datetime → Firestore Timestamp (NOT ISO string — that
+     was the post-E.5 BLOCK fix at commit 5c018dd).
+   - **MemoryUpdate** → JSONL append to audit log only (no Firestore).
+   - **TelegramPush** → POST to Telegram Bot API. Urgency emoji
+     prefix (ℹ️ / ⚠️ / 🚨). 401 → `telegram_auth_failed`, 429 →
+     `rate_limited`, etc.
+   - **Telemetry** → `heartbeat_health/{tick_id}`. Tick ID derived
+     from `result.tick_ts` (NOT dispatch clock) so retries overwrite
+     instead of duplicating.
+   - **Audit log** → 1 "kind=tick" line + 1 "kind=action" line per
+     emitted action. Lines truncated to <PIPE_BUF (4096 B) for
+     atomic-append guarantee on POSIX. Dedupe by action.id.
+8. Return `TickResult` to systemd (rc=0 on ok/no-op, rc=1 on error).
+
+Skipped when `result.status == "error"`: action dispatch (avoids
+emitting half-baked output). Telemetry + audit still write so the
+operator can see the failure.
+
+### 5.2 Tier I (in-Tauri) tick
+
+1. App boot → `setup()` calls `spawn_tier_i_loop(app.handle())` in
+   `src-tauri/src/heartbeat/tick.rs`.
+2. Tokio task sleeps 30s (warmup, lets JS attach listener), then
+   `interval = tokio::time::interval(3600s)` consumes immediate
+   tick, then enters `tokio::select!` between `interval.tick()` and
+   `run_now.notified()`.
+3. Each tick emits `heartbeat:tier-i:tick` event with payload
+   `{tick_ts, tick_count, trigger}`.
+4. JS listener in `src/hooks/useHeartbeatTierI.ts` listens + ALSO
+   subscribes to Firestore `heartbeat_health` (filtered by
+   tenantId + engagementId). Computes `TierIVerdict`:
+   - `healthy` — recent Tier II tick, no error
+   - `stale` — last tick >2h ago
+   - `error` — last tick reported error
+   - `unknown` — no telemetry yet
+5. UI: `src/components/heartbeat/HeartbeatStatusCard.tsx` renders
+   pill + last-tick info + "Run now" button.
+6. "Run now" button → `invoke("heartbeat_run_now")` → notifies the
+   `Notify` signal → Rust loop wakes via tokio::select! → fires
+   immediately with trigger="manual".
+
+### 5.3 Operational runbooks
+
+**Build Mac app from source**:
+```bash
+cd ~/projects/apps/ikrs-workspace
+git checkout main && git pull origin main
+npm install
+npm run tauri build
+rm -rf "/Applications/IKAROS Workspace.app"
+cp -R "src-tauri/target/release/bundle/macos/IKAROS Workspace.app" /Applications/
+open "/Applications/IKAROS Workspace.app"
+```
+
+**Install Tier II on a fresh VM**:
+```bash
+# On the VM:
+git clone https://github.com/IKAROSgit/ikrs-workspace.git ~/projects/apps/ikrs-workspace
+cd ~/projects/apps/ikrs-workspace
+sudo bash heartbeat/scripts/install.sh
+# Answer interactive prompts; copy SA + token files separately.
+```
+
+**Deploy a code update to the VM**:
+```bash
+# On the VM (already installed):
+cd ~/projects/apps/ikrs-workspace
+git pull origin main
+sudo /opt/ikrs-heartbeat/venv/bin/pip install -e ~/projects/apps/ikrs-workspace/heartbeat --quiet
+sudo systemctl restart ikrs-heartbeat.service
+```
+
+**Rotate Gemini API key**:
+```bash
+# On the VM:
+sudo nano /etc/ikrs-heartbeat/secrets.env  # update GEMINI_API_KEY
+sudo systemctl restart ikrs-heartbeat.service
+```
+
+**Rotate Telegram bot token** (BotFather `/revoke` → new token):
+Same as above with `TELEGRAM_BOT_TOKEN`.
+
+**Rotate Firebase service account**:
+1. Generate new key in Firebase Console → Service accounts.
+2. `scp` to VM, install at `/etc/ikrs-heartbeat/firebase-sa.json`
+   with mode 0600 ikrs:ikrs.
+3. `sudo systemctl restart ikrs-heartbeat.service`.
+
+**Re-bootstrap OAuth (if Google account changes or token revoked)**:
+```bash
+# On Mac:
+cd ~/projects/apps/ikrs-workspace/heartbeat
+.venv/bin/python -m heartbeat.oauth_bootstrap /path/to/client_secret.json
+# Browser flow, sign in with the right Google account.
+scp token.json moe_ikaros_ae@elara-vm:/tmp/google-token.json
+ssh moe_ikaros_ae@elara-vm
+sudo install -m 0600 -o ikrs -g ikrs /tmp/google-token.json /etc/ikrs-heartbeat/google-token.json
+rm /tmp/google-token.json
+sudo systemctl start ikrs-heartbeat.service
+```
+
+**Debug a failing tick**:
+```bash
+ssh moe_ikaros_ae@elara-vm
+sudo systemctl status ikrs-heartbeat.service
+sudo journalctl -u ikrs-heartbeat -n 200 --no-pager
+sudo tail -n 5 /home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-log.jsonl | python3 -m json.tool
+```
+
+**Reset Tier II state (force "first run" on next tick)**:
+```bash
+sudo rm -f /home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-state.json
+sudo systemctl start ikrs-heartbeat.service
+```
+
+**Deploy Firestore rules / indexes** (do this from Mac):
+```bash
+cd ~/projects/apps/ikrs-workspace
+npx firebase-tools deploy --only firestore:rules,firestore:indexes --project ikaros-portal
+```
+
+## 6. Schema reference
+
+### 6.1 `heartbeat_health` doc
+
+```
+{
+  tenantId: string         // consultant Firebase UID
+  engagementId: string     // engagements/{id} doc ID
+  tier: "I" | "II"
+  tickTs: string           // ISO-8601 with TZ
+  status: "ok" | "error" | "skipped" | "no-op"
+  durationMs: int
+  tokensUsed: int
+  promptVersion: string    // e.g. "tick_prompt.v1"
+  actionsEmitted: int
+  errorCode: string | null
+  expiresAt: string        // ISO-8601, 30 days after tickTs (for TTL)
+}
+```
+
+### 6.2 Heartbeat-emitted `ikrs_tasks` doc
+
+Mirrors Tauri `Task` (src/types/index.ts:99):
+
+```
+{
+  _v: 1
+  id: string                        // UUID (server-generated post-E.4 fix)
+  engagementId: string              // matches Tauri filter
+  tenantId: string                  // denormalised for audit
+  title: string
+  description: string
+  status: "backlog"                 // always start in backlog
+  priority: "p1" | "p2" | "p3"      // mapped from urgent/high/medium/low
+  tags: ["heartbeat", "tier-ii"]
+  subtasks: []
+  sortOrder: 0
+  source: "claude"
+  assignee: "consultant"
+  rationale: string                 // why this matters now
+  notesCount: 0
+  createdAt: Timestamp              // Python datetime → Firestore Timestamp (post-E.5 fix)
+  updatedAt: Timestamp
+}
+```
+
+### 6.3 `TickState` (Python dataclass, persisted as JSON)
+
+```python
+@dataclass(frozen=True)
+class TickState:
+    schema_version: int = CURRENT_STATE_SCHEMA   # bumped via append-only _MIGRATIONS
+    last_tick_ts: str | None = None
+    last_seen_event_ids: list[str] = ...
+    last_seen_thread_ids: list[str] = ...
+    last_action_ids: list[str] = ...
+    last_action_summaries: list[str] = ...       # natural-language, fed back to LLM
+    last_vault_mtimes: dict[str, str] = ...
+```
+
+### 6.4 Prompt template
+
+`heartbeat/src/heartbeat/prompts/tick_prompt_v1.txt`. Versioned —
+bump file + `CURRENT_PROMPT_VERSION` together. Old versions kept on
+disk so old `heartbeat_health.promptVersion` rows can be retraced.
+
+## 7. Known limitations & open work
+
+1. **Single-token Tier II OAuth.** Phase E v1 reads one Google account
+   at a time. Multi-engagement requires Phase F design (Firestore-
+   synced per-engagement tokens, encrypted).
+2. **Vault on Mac is not synced to VM by default.** First-soak
+   deployments use an empty test vault on the VM; the vault collector
+   reports zero changes. Real vault sync (Syncthing? rsync? gcsfuse?)
+   is operator-choice.
+3. **`ProtectHome=true` was wrong default in install.sh.** Fixed at
+   commit `5715688` to flip to `false` when `vault_root` is under
+   `/home/*`. Existing deployments need a one-line `sed`.
+4. **`ikrs_tasks.createdAt` was string-typed pre-E.5-fix at commit
+   `5c018dd`.** Old docs are invisible to the Tauri Kanban reader.
+   Solution: delete old docs from Firestore Console.
+5. **Audit log line size cap.** 4096 B (PIPE_BUF) for atomic appends.
+   Lines exceeding the cap log a warning but still write; concurrent
+   appenders may interleave bytes (cosmetic, not data corruption).
+6. **No notarization on Mac builds.** Ad-hoc signing only. Apple ID
+   distribution requires real notarization setup (deferred).
+7. **Email privacy is on at GitHub for the operator's account** →
+   commits authored as `IKAROSgit@users.noreply.github.com`. Don't
+   regress by re-adding `moe@ikaros.ae` as an author email.
+8. **`ProtectSystem=strict` requires explicit `ReadWritePaths`** for
+   each writable path. `/etc/ikrs-heartbeat` is now in that list (commit
+   `df68275`) so OAuth refresh-token rotation can persist back.
+9. **Per-engagement vault paths not in TOML** — install.sh appends a
+   single `ReadWritePaths=<vault_root>` line. Multi-engagement support
+   requires reworking this in Phase F.
+10. **No quiet-hours config for Telegram pushes.** Spec is explicit:
+    24/7 operation. Operator can mute the bot in Telegram client-side.
+
+## 8. Update protocol — how to keep this doc honest
+
+When you submit a change that touches:
+- Architecture (new service, file move, new dep, identity flow change)
+- Secret material (new env var, new keychain entry, new token type)
+- Firestore (new collection, new field, rules change, index change)
+- Scheduling (cron, systemd unit, tokio interval)
+- Operator runbooks (install/deploy/rotate steps)
+- Phase status (new phase, phase moved to shipped/blocked/deferred)
+- Known limitations (new one discovered, old one fixed)
+
+…you MUST update this doc in the same commit. CI enforces this via
+`scripts/check-ecosystem-docs.sh`. Pre-commit hook also available
+(install with `./scripts/install-pre-commit-hook.sh`).
+
+If unsure whether your change qualifies — update the doc anyway. It's
+better to over-document than to leave the next contributor (human or
+AI) reading stale information.
+
+When updating, follow these rules:
+1. Update the relevant section, not the bottom.
+2. Bump the "Last verified" check at the top of the doc by reading it
+   fully and confirming each section is current.
+3. If you removed a feature or limitation, MOVE it to a "Removed"
+   subsection rather than just deleting — it preserves the history of
+   what the system used to do.
+4. Don't remove specific UIDs / engagement IDs from §2.1 unless they
+   actually changed.
+
+The doc is the canonical reference. Code is implementation detail.
