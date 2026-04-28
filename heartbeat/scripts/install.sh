@@ -224,11 +224,46 @@ elif [[ ! -f "$ETC_DIR/firebase-sa.json" ]]; then
   warn "  sudo install -m 0600 -o $IKRS_USER -g $IKRS_USER /path/to/sa.json $ETC_DIR/firebase-sa.json"
 fi
 
-# Google OAuth token from the operator's Mac (scp'd to the VM ahead of time).
-if [[ ! -f "$ETC_DIR/google-token.json" ]]; then
-  warn "no Google OAuth token at $ETC_DIR/google-token.json — produce it on Mac:"
-  warn "  python3 -m heartbeat.oauth_bootstrap   # (manual step — see README §quickstart)"
-  warn "  scp token.json vm:$ETC_DIR/google-token.json"
+# Phase F: Token encryption key for Firestore-synced OAuth tokens.
+# Generate if not already set or present in secrets.env.
+TOKEN_ENCRYPTION_KEY="${TOKEN_ENCRYPTION_KEY:-}"
+TOKEN_ENCRYPTION_KEY_VERSION="${TOKEN_ENCRYPTION_KEY_VERSION:-1}"
+if [[ -z "$TOKEN_ENCRYPTION_KEY" ]] && [[ -f "$SECRETS_FILE" ]] && grep -q "^TOKEN_ENCRYPTION_KEY=" "$SECRETS_FILE"; then
+  TOKEN_ENCRYPTION_KEY="$(grep "^TOKEN_ENCRYPTION_KEY=" "$SECRETS_FILE" | head -n 1 | cut -d= -f2- | tr -d '"')"
+  TOKEN_ENCRYPTION_KEY_VERSION="$(grep "^TOKEN_ENCRYPTION_KEY_VERSION=" "$SECRETS_FILE" | head -n 1 | cut -d= -f2- | tr -d '"' || echo 1)"
+fi
+if [[ -z "$TOKEN_ENCRYPTION_KEY" ]]; then
+  say "generating AES-256-GCM token encryption key (Phase F)"
+  TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+  TOKEN_ENCRYPTION_KEY_VERSION="1"
+  echo ""
+  echo "================================================================"
+  echo "  BACK UP THIS KEY — it encrypts all OAuth tokens in Firestore."
+  echo "  If you lose it, ALL encrypted tokens become unreadable and"
+  echo "  operators must re-authenticate via the Tauri app."
+  echo ""
+  echo "  TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY"
+  echo ""
+  echo "  Copy this key to your Mac's .env.local as:"
+  echo "  VITE_TOKEN_ENCRYPTION_KEY=$TOKEN_ENCRYPTION_KEY"
+  echo "================================================================"
+  echo ""
+  printf "[install] Press ENTER to acknowledge you have backed up the key: "
+  read -r _
+fi
+
+# Phase F: detect upgrade-from-Phase-E scenario.
+# If legacy google-token.json exists but no encryption key was previously set,
+# the operator needs to run the migration script after install completes.
+NEEDS_TOKEN_MIGRATION=false
+if [[ -f "$ETC_DIR/google-token.json" ]]; then
+  say "legacy google-token.json found (Phase E). After install, migrate with:"
+  say "  source $SECRETS_FILE && export TOKEN_ENCRYPTION_KEY TOKEN_ENCRYPTION_KEY_VERSION"
+  say "  sudo -E $VENV_DIR/bin/python $HEARTBEAT_SOURCE/scripts/migrate-token-to-firestore.py <engagement-id>"
+  NEEDS_TOKEN_MIGRATION=true
+else
+  say "no legacy google-token.json — fresh install (Phase F)."
+  say "operator must connect Google in the Tauri app for each engagement."
 fi
 
 # Now write secrets.env (idempotent rewrite — preserves prior values).
@@ -237,6 +272,8 @@ GEMINI_API_KEY="$GEMINI_API_KEY"
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
 FIREBASE_SA_KEY_PATH="$ETC_DIR/firebase-sa.json"
+TOKEN_ENCRYPTION_KEY="$TOKEN_ENCRYPTION_KEY"
+TOKEN_ENCRYPTION_KEY_VERSION="$TOKEN_ENCRYPTION_KEY_VERSION"
 EOF
 chown "$IKRS_USER:$IKRS_USER" "$SECRETS_FILE"
 chmod 0600 "$SECRETS_FILE"
@@ -302,3 +339,9 @@ say "  next tick fires:           $(systemctl show ikrs-heartbeat.timer -p NextE
 say "  follow logs:               sudo journalctl -u ikrs-heartbeat -f"
 say "  fire one tick now:         sudo systemctl start ikrs-heartbeat.service"
 say "  uninstall:                 sudo $SCRIPT_DIR/uninstall.sh"
+if $NEEDS_TOKEN_MIGRATION; then
+  echo ""
+  warn "ACTION REQUIRED: migrate legacy google-token.json to Firestore."
+  warn "  source $SECRETS_FILE && export TOKEN_ENCRYPTION_KEY TOKEN_ENCRYPTION_KEY_VERSION"
+  warn "  sudo -E $VENV_DIR/bin/python $HEARTBEAT_SOURCE/scripts/migrate-token-to-firestore.py <engagement-id>"
+fi

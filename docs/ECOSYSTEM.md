@@ -55,7 +55,7 @@ table (preserve history) and remove the section.
 | Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
-| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | 🚧 F.1-F.5 landed (spec + Tauri write + heartbeat read + multi-engagement + migration); F.6-F.8 pending |
+| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | 🚧 F.1-F.6 landed; F.7 (adversarial review) + F.8 (deploy) pending |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -589,6 +589,21 @@ cd ~/projects/apps/ikrs-workspace
 npx firebase-tools deploy --only firestore:rules,firestore:indexes --project ikaros-portal
 ```
 
+**Rotate token encryption key (Phase F)**:
+```bash
+# On the VM:
+NEW_KEY="$(openssl rand -base64 32)"
+sudo nano /etc/ikrs-heartbeat/secrets.env
+# Move TOKEN_ENCRYPTION_KEY → TOKEN_ENCRYPTION_KEY_PREV
+# Move TOKEN_ENCRYPTION_KEY_VERSION → TOKEN_ENCRYPTION_KEY_PREV_VERSION
+# Set TOKEN_ENCRYPTION_KEY="$NEW_KEY"
+# Bump TOKEN_ENCRYPTION_KEY_VERSION (e.g. 1 → 2)
+sudo systemctl restart ikrs-heartbeat.service
+# Next tick reads with old key, writes back with new key (auto re-encrypt).
+# After all engagements have ticked once, remove _PREV entries.
+# Update Mac .env.local: VITE_TOKEN_ENCRYPTION_KEY=<new key>
+```
+
 ## 6. Schema reference
 
 ### 6.1 `heartbeat_health` doc
@@ -689,6 +704,12 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
    updated for multi-engagement (F.6).
 10. **No quiet-hours config for Telegram pushes.** Spec is explicit:
     24/7 operation. Operator can mute the bot in Telegram client-side.
+11. **No automated key rotation script.** Key rotation is a manual
+    procedure (see §5.4 runbook). A future script could iterate all
+    engagement `google_tokens` docs, decrypt with old key, re-encrypt
+    with new key, and update Firestore — but the manual procedure
+    (let the heartbeat auto-re-encrypt on next tick) works for the
+    current single-operator deployment.
 
 ## 8. Update protocol — how to keep this doc honest
 
