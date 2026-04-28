@@ -137,6 +137,23 @@ def write_kanban_task(
     if client is None:
         raise ValueError("Firestore client must be provided (use get_firestore_client).")
 
+    # Tauri's Kanban reader deserialises createdAt/updatedAt as JS Date
+    # via Firestore Timestamp. If we write an ISO string, the SDK reads
+    # it as a string and the .toDate() call in EngagementProvider throws
+    # — the doc is silently skipped and the heartbeat-emitted card never
+    # appears in the UI. Convert to a Python datetime so the Admin SDK
+    # writes it as a proper Firestore Timestamp.
+    from datetime import datetime as _dt
+
+    if action.emitted_at:
+        try:
+            created_at_ts: _dt | str = _dt.fromisoformat(action.emitted_at)
+        except ValueError:
+            # Defensive: malformed emitted_at falls back to "now".
+            created_at_ts = _dt.now().astimezone()
+    else:
+        created_at_ts = _dt.now().astimezone()
+
     # Derive the Tauri-shaped Kanban doc. New heartbeat cards land in
     # the backlog column so the operator decides when to promote them.
     doc = {
@@ -159,12 +176,10 @@ def write_kanban_task(
         "assignee": "consultant",
         "rationale": action.rationale,
         "notesCount": 0,
-        # Tauri reads createdAt/updatedAt as Firestore Timestamps, but
-        # Admin SDK accepts ISO strings + serverTimestamp interchangeably.
-        # We send the tick's emitted_at as both — operator gets a stable
-        # timestamp regardless of dispatch latency.
-        "createdAt": action.emitted_at,
-        "updatedAt": action.emitted_at,
+        # Python datetime → Firestore Timestamp on the wire (admin SDK
+        # auto-converts). Tauri reads back as a JS Date.
+        "createdAt": created_at_ts,
+        "updatedAt": created_at_ts,
     }
     try:
         client.collection("ikrs_tasks").document(action.id).set(doc, merge=False)
