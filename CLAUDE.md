@@ -16,10 +16,10 @@ It documents:
 - Schema reference (Firestore docs, TickState, prompt template)
 - Known limitations and open work
 
-**Two non-negotiable rules:**
+**Three non-negotiable rules:**
 
-1. **READ `docs/ECOSYSTEM.md` BEFORE making any non-trivial change.**
-   This is not optional. Stale knowledge has bitten this project before.
+1. **READ `docs/ECOSYSTEM.md` IN FULL BEFORE making any non-trivial change.**
+   Not skim. Read. Stale knowledge has bitten this project before.
 
 2. **UPDATE `docs/ECOSYSTEM.md` IN THE SAME COMMIT** as any change that
    touches:
@@ -31,8 +31,21 @@ It documents:
    - Phase status (new phase, phase moved between states)
    - Known limitations (new ones found, old ones fixed)
 
-If unsure whether a change qualifies, update the doc anyway. CI enforces
-this rule via `scripts/check-ecosystem-docs.sh`.
+3. **WHEN ADDING A NEW INTEGRATION**, the integration MUST get its own
+   dedicated, comprehensive section in `docs/ECOSYSTEM.md` —
+   *why it exists, how it's set up, how it's used, what it does NOT
+   do, what's planned next* — AND must be added to the
+   "Integration coverage checklist" table near the top of the doc.
+   "Mentioned in passing across 3 sections" does NOT satisfy this rule.
+   See the checklist for the current list and `⚠️`/`❌` rows
+   that document existing technical debt to clear.
+
+CI enforces rule 2 via `scripts/check-ecosystem-docs.sh`. Rule 3 is
+enforced by human review at PR time + the checklist section's
+self-policing format. Rules 1 and 3 are enforced by your professional
+discipline. Don't be the agent that fails them.
+
+If unsure whether a change qualifies, update the doc anyway.
 
 ## Workflow
 

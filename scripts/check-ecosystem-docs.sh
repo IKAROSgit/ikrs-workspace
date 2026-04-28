@@ -100,6 +100,32 @@ if ! git rev-parse --verify "$HEAD" >/dev/null 2>&1; then
   exit 2
 fi
 
+# Structural self-check: ECOSYSTEM.md MUST contain the
+# "Integration coverage checklist" section. This is the anchor that
+# prevents new integrations from being added without dedicated doc
+# sections (CLAUDE.md rule 3). If it's missing, fail loud — the
+# repo's documentation contract is broken.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ -f "$REPO_ROOT/$DOC" ]]; then
+  if ! grep -Fq "## Integration coverage checklist" "$REPO_ROOT/$DOC"; then
+    {
+      echo
+      echo "❌ check-ecosystem-docs: $DOC is missing the"
+      echo "   '## Integration coverage checklist' section."
+      echo
+      echo "This section is required (CLAUDE.md rule 3). It enumerates"
+      echo "every external integration the system uses + the doc section"
+      echo "where each is documented. Restore it before this check can pass."
+      echo
+      echo "If you're trying to remove a deprecated integration, move its"
+      echo "row to the 'Removed integrations' subsection instead of"
+      echo "deleting the whole checklist."
+      echo
+    } >&2
+    exit 1
+  fi
+fi
+
 CHANGED="$(git diff --name-only "$BASE" "$HEAD")"
 if [[ -z "$CHANGED" ]]; then
   echo "check-ecosystem-docs: no changes between $BASE and $HEAD."

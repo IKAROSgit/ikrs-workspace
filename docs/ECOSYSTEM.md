@@ -14,6 +14,61 @@ elsewhere, this doc is stale and trusting it is unsafe.
 
 ---
 
+## Integration coverage checklist
+
+Every external integration / service / dependency the system uses
+MUST have a dedicated, comprehensive section in this doc. "Mentioned
+in passing across 3 sections" does not count — each integration
+deserves its own block answering *why it exists, how it's set up,
+how it's used, what it does NOT do, what's planned next*.
+
+When you ADD a new integration, you MUST:
+1. Add a row to the table below.
+2. Write its dedicated section in the appropriate place in the doc.
+3. Make sure both happen in the same commit.
+
+When you REMOVE an integration, move its row to the "Removed" sub-
+table (preserve history) and remove the section.
+
+| Integration | Purpose | Doc section | Status |
+|---|---|---|---|
+| Tauri 2 + React frontend | Primary operator UI on Mac | §1, §3.1 | ✅ |
+| Rust core (tokio, tauri-plugin-*) | Tauri runtime, OS integration | §1, §3.1 | ✅ |
+| Tier I heartbeat (Rust tokio) | In-app cadence driver, while user present | §5.2 | ✅ |
+| Tier II heartbeat (Python on VM) | 24/7 Gemini-driven triage | §5.1 | ✅ |
+| Firebase Auth | Operator + client portal identity | §2 | ✅ |
+| Firestore (client SDK) | Tauri reads/writes engagement-scoped data | §3.4 | ✅ |
+| Firebase Admin SDK (service account) | Tier II writes telemetry + tasks | §3.4, §5.1 | ✅ |
+| Firestore rules + indexes | Per-collection auth + query support | §3.4 | ✅ |
+| Gmail API (read-only) | Tier II email collector | §5.1 | ✅ |
+| Google Calendar API (read-only) | Tier II calendar collector | §5.1 | ✅ |
+| Google OAuth (installed-app flow) | Per-engagement Gmail/Calendar auth | §3.1, §5.1 | ✅ (single-token in v1; Phase F multi-token) |
+| Gemini 2.5 Pro (`google-genai` SDK) | Tier II LLM | §5.1 | ✅ |
+| Telegram Bot API | Mobile push for urgent items | §5.3 | ✅ |
+| BotFather + per-operator bots | Telegram bot provisioning | §5.3 | ✅ |
+| Claude Code subprocess | In-app coding/chat sessions per engagement | §1, §3.1 | ⚠️ section thin — needs dedicated coverage |
+| MCP servers (Gmail/Calendar/Drive/Obsidian) | Per-engagement tool access for Claude sessions | none | ❌ no dedicated section yet |
+| Tailscale | VM access (mesh networking, identity-based SSH) | §3.2 | ⚠️ mentioned, no dedicated section |
+| systemd timer + service | Tier II hourly cadence on VM | §3.2, §5.1 | ✅ |
+| macOS keychain (tauri-plugin-keyring) | Per-engagement OAuth token storage on Mac | §3.1 | ⚠️ mentioned, no dedicated section |
+| Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
+| GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
+| Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
+| Phase F encrypted token sync (planned) | Per-engagement OAuth via Firestore | §4 (planned) | 🚧 spec locked, F.2-F.8 pending |
+
+**Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
+mention it but no dedicated block) • ❌ undocumented • 🚧 planned
+
+The ⚠️ and ❌ rows are **technical debt in this doc itself** — they
+should be fixed before adding more integrations on top.
+
+### Removed integrations
+
+(Empty for now. Move rows here with a note about when/why if any
+integration is retired.)
+
+---
+
 ## 0. What is IKAROS Workspace?
 
 IKAROS Workspace is a consultant's professional desktop tool: a Tauri 2
