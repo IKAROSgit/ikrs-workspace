@@ -1,0 +1,14 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "heartbeat_health",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantId", "order": "ASCENDING" },
+        { "fieldPath": "engagementId", "order": "ASCENDING" },
+        { "fieldPath": "tickTs", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
