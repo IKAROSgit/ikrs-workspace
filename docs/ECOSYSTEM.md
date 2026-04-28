@@ -8,9 +8,10 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: see `git log -1 -- docs/ECOSYSTEM.md`. If the most recent
-commit to a file in this list pre-dates an architecture-touching commit
-elsewhere, this doc is stale and trusting it is unsafe.
+Last verified: 2026-04-28 (Phase F spec lock, all sections reviewed).
+See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
+file in this list pre-dates an architecture-touching commit elsewhere,
+this doc is stale and trusting it is unsafe.
 
 ---
 
@@ -229,6 +230,7 @@ works without password.
 | `ikrs_tasks/{taskId}` | Kanban tasks (manual + heartbeat-emitted). NOT to be confused with `tasks/` (Mission Control) | engagement consultant + clients with engagement access | engagement consultant + Tier II Admin SDK |
 | `taskNotes/{noteId}` | Per-task notes | engagement consultant | engagement consultant |
 | `taskNotes/{noteId}/shareEvents/{eventId}` | Append-only audit of share state changes | engagement consultant + clients | engagement consultant + clients |
+| `engagements/{id}/google_tokens/{provider}` | AES-256-GCM encrypted OAuth tokens (Phase F). Plaintext = `{access_token, refresh_token, expires_at, client_id, client_secret}`. Schema: `{ciphertext, iv, keyVersion, updatedAt, writtenBy}`. See `docs/specs/m3-phase-f-token-sync.md`. | engagement consultant (client SDK) + Admin SDK | engagement consultant (client SDK on OAuth success) + Admin SDK (heartbeat refresh-token writeback) |
 | `heartbeat_health/{tickId}` | Tier II telemetry, 30-day TTL via `expiresAt`. Tick ID format: `<tenantId>__<engagementId>__<tickTs-with-colons-replaced>` | any authed user | Admin SDK only (not client SDK) |
 | `agent_sessions/...` | Claude session metadata | engagement consultant | engagement consultant |
 | `subscriptions/{id}` | Billing | self | system |
@@ -251,7 +253,7 @@ firestore:rules` and `firestore:indexes`.
 | M3 Phase 1-3 | Kanban v1, notes, files, calendar | shipped | |
 | M3 Phase 4 (timesheets) | Pending design | pending | |
 | **M3 Phase E** | **Autonomous heartbeat (dual-tier)** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-e-autonomous-heartbeat.md` |
-| **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **pending design + implementation** | Spec to be drafted at `docs/specs/m3-phase-f-token-sync.md`. Triggered by the architectural limit found during Phase E soak: heartbeat reads only one inbox at a time. |
+| **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **in progress — F.1 spec locked, F.2-F.8 to follow** | Spec: `docs/specs/m3-phase-f-token-sync.md`. Pre-code adversarial challenge passed (3 showstoppers fixed). Tauri writes AES-256-GCM encrypted tokens to `engagements/{eid}/google_tokens/{provider}`; heartbeat reads + decrypts per-engagement via Admin SDK. |
 
 ## 5. Heartbeat (Phase E) operational reference
 
@@ -622,8 +624,9 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
 ## 7. Known limitations & open work
 
 1. **Single-token Tier II OAuth.** Phase E v1 reads one Google account
-   at a time. Multi-engagement requires Phase F design (Firestore-
-   synced per-engagement tokens, encrypted).
+   at a time. **Fix in progress:** Phase F spec locked at
+   `docs/specs/m3-phase-f-token-sync.md` — Firestore-synced
+   per-engagement encrypted tokens. F.2-F.8 implementation pending.
 2. **Vault on Mac is not synced to VM by default.** First-soak
    deployments use an empty test vault on the VM; the vault collector
    reports zero changes. Real vault sync (Syncthing? rsync? gcsfuse?)
