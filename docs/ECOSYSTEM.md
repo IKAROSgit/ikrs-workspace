@@ -55,7 +55,7 @@ table (preserve history) and remove the section.
 | Hardened Runtime + entitlements | Mac code-signing posture | none | ❌ no dedicated section yet |
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
-| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4 | 🚧 F.1-F.3 landed (spec + Tauri write + heartbeat read); F.4-F.8 pending |
+| Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4 | 🚧 F.1-F.4 landed (spec + Tauri write + heartbeat read + multi-engagement); F.5-F.8 pending |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -193,7 +193,7 @@ makes the engagement invisible to the operator.**
 | Path | Purpose | Mode | Owner |
 |---|---|---|---|
 | `~/projects/apps/ikrs-workspace/` | Code mirror (cloned from GitHub, on `main`) | 0755 | `moe_ikaros_ae` |
-| `/etc/ikrs-heartbeat/heartbeat.toml` | Non-secret config (tenant_id, engagement_id, vault_root, LLM knobs) | 0640 | `ikrs:ikrs` |
+| `/etc/ikrs-heartbeat/heartbeat.toml` | Non-secret config (tenant_id, `[[engagements]]` array or legacy flat engagement_id + vault_root, LLM knobs) | 0640 | `ikrs:ikrs` |
 | `/etc/ikrs-heartbeat/secrets.env` | Secret env vars: `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `FIREBASE_SA_KEY_PATH`, `TOKEN_ENCRYPTION_KEY` + `TOKEN_ENCRYPTION_KEY_VERSION` (Phase F) | 0600 | `ikrs:ikrs` |
 | `/etc/ikrs-heartbeat/firebase-sa.json` | Firebase Admin SDK service account JSON | 0600 | `ikrs:ikrs` |
 | `/etc/ikrs-heartbeat/google-token.json` | OAuth token (Phase E v1: single account; Phase F: replaced by Firestore-synced tokens) | 0600 | `ikrs:ikrs` |
@@ -654,9 +654,10 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
 8. **`ProtectSystem=strict` requires explicit `ReadWritePaths`** for
    each writable path. `/etc/ikrs-heartbeat` is now in that list (commit
    `df68275`) so OAuth refresh-token rotation can persist back.
-9. **Per-engagement vault paths not in TOML** — install.sh appends a
-   single `ReadWritePaths=<vault_root>` line. Multi-engagement support
-   requires reworking this in Phase F.
+9. **Per-engagement vault paths in TOML** — Phase F.4 added
+   `[[engagements]]` array with per-engagement `vault_root`. install.sh
+   still appends a single `ReadWritePaths=<vault_root>` line — must be
+   updated for multi-engagement (F.6).
 10. **No quiet-hours config for Telegram pushes.** Spec is explicit:
     24/7 operation. Operator can mute the bot in Telegram client-side.
 

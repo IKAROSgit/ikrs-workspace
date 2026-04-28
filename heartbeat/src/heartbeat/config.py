@@ -14,11 +14,14 @@ populate the secret-using fields lazily when their adapter actually fires
 
 from __future__ import annotations
 
+import logging
 import os
 import tomllib  # Python 3.11+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("heartbeat.config")
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,18 @@ class OutputsConfig:
 
 
 @dataclass(frozen=True)
+class EngagementConfig:
+    """Per-engagement config (Phase F multi-engagement support).
+
+    Parsed from ``[[engagements]]`` array in heartbeat.toml, or
+    auto-wrapped from legacy flat ``engagement_id`` + ``vault_root``.
+    """
+
+    id: str
+    vault_root: Path
+
+
+@dataclass(frozen=True)
 class HeartbeatConfig:
     """Full heartbeat configuration."""
 
@@ -73,9 +88,13 @@ class HeartbeatConfig:
     # Where structured tick logs are appended. Inside the vault by convention
     # so it travels with the engagement.
     audit_log_path: Path = field(default_factory=lambda: Path("_memory/heartbeat-log.jsonl"))
+    # Phase F: list of engagements. If empty, the single engagement_id + vault_root
+    # pair is used (backwards-compatible). If populated, engagement_id and vault_root
+    # reflect the first entry (for code that doesn't iterate yet).
+    engagements: list[EngagementConfig] = field(default_factory=list)
 
 
-_REQUIRED_TOP_LEVEL = ("tenant_id", "engagement_id", "vault_root")
+_REQUIRED_TOP_LEVEL = ("tenant_id",)
 
 
 def load_config(path: Path) -> HeartbeatConfig:
@@ -95,10 +114,41 @@ def load_config(path: Path) -> HeartbeatConfig:
     if missing:
         raise ValueError(f"missing required keys in {path}: {', '.join(missing)}")
 
-    # Resolve symlinks + normalize. The VM may have /home/ikrs as a symlink
-    # to a mounted volume; downstream containment checks (audit_log_path
-    # below, vault diff signal in E.3) all assume vault_root is a real path.
-    vault_root = Path(str(raw["vault_root"])).expanduser().resolve()
+    # Phase F: parse [[engagements]] array or fall back to legacy flat fields.
+    engagements_raw: list[dict[str, Any]] = raw.get("engagements", []) or []
+    engagements: list[EngagementConfig] = []
+
+    if engagements_raw:
+        for i, eng in enumerate(engagements_raw):
+            eid = eng.get("id", "")
+            vr = eng.get("vault_root", "")
+            if not eid:
+                raise ValueError(f"engagements[{i}].id is required")
+            if not vr:
+                raise ValueError(f"engagements[{i}].vault_root is required")
+            engagements.append(EngagementConfig(
+                id=str(eid),
+                vault_root=Path(str(vr)).expanduser().resolve(),
+            ))
+        # Use first engagement as the default for backwards-compat fields
+        engagement_id = engagements[0].id
+        vault_root = engagements[0].vault_root
+    else:
+        # Legacy flat format — require engagement_id + vault_root at top level
+        if "engagement_id" not in raw:
+            raise ValueError(f"missing required key in {path}: engagement_id "
+                             "(or use [[engagements]] array)")
+        if "vault_root" not in raw:
+            raise ValueError(f"missing required key in {path}: vault_root "
+                             "(or use [[engagements]] array)")
+        engagement_id = str(raw["engagement_id"])
+        vault_root = Path(str(raw["vault_root"])).expanduser().resolve()
+        # Auto-wrap into a single-element list for code that iterates
+        engagements = [EngagementConfig(id=engagement_id, vault_root=vault_root)]
+        logger.warning(
+            "Legacy single-engagement config detected. Consider migrating to "
+            "[[engagements]] array format. See config/heartbeat.toml.example."
+        )
 
     llm_raw = raw.get("llm", {}) or {}
     llm = LlmConfig(
@@ -154,13 +204,14 @@ def load_config(path: Path) -> HeartbeatConfig:
 
     return HeartbeatConfig(
         tenant_id=str(raw["tenant_id"]),
-        engagement_id=str(raw["engagement_id"]),
+        engagement_id=engagement_id,
         vault_root=vault_root,
         prompt_version=str(raw.get("prompt_version", "tick_prompt.v1")),
         llm=llm,
         signals=signals,
         outputs=outputs,
         audit_log_path=audit_log_path,
+        engagements=engagements,
     )
 
 
