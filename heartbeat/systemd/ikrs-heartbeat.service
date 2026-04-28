@@ -29,6 +29,10 @@ ProtectSystem=strict
 ProtectHome=true
 # State (TickState JSON) lives here.
 ReadWritePaths=/var/lib/ikrs-heartbeat
+# google-auth refreshes the OAuth access token in place; without write
+# access here, every tick emits a "could not persist refreshed token"
+# warning and the on-disk token slowly drifts behind the in-memory one.
+ReadWritePaths=/etc/ikrs-heartbeat
 # Vault root is configured per-engagement; the install script appends a
 # matching ReadWritePaths= line during setup. Heartbeat needs read+write
 # under the vault for the audit log under _memory/.
