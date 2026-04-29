@@ -1,0 +1,37 @@
+[Unit]
+Description=IKAROS Heartbeat — Telegram bot poller (bidirectional commands)
+Documentation=https://github.com/IKAROSgit/ikrs-workspace/blob/main/docs/specs/m3-phase-g-proactive-intelligence.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Long-running process. Restart unconditionally — operator wants the
+# poller up at all times, even after clean exit.
+Type=simple
+Restart=always
+RestartSec=5s
+
+User=ikrs
+Group=ikrs
+
+# Same secrets as the tick service.
+EnvironmentFile=/etc/ikrs-heartbeat/secrets.env
+
+ExecStart=/opt/ikrs-heartbeat/venv/bin/python -m heartbeat.poller.main \
+  --config /etc/ikrs-heartbeat/heartbeat.toml
+
+StandardOutput=journal
+StandardError=journal
+
+# ---- hardening ----
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ikrs-heartbeat
+ReadWritePaths=/etc/ikrs-heartbeat
+# Memory cap: poller is lightweight (no Gemini SDK, no signal collectors).
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target

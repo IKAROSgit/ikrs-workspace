@@ -56,7 +56,7 @@ table (preserve history) and remove the section.
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
 | Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | ✅ shipped (bb8a506) |
-| Phase G: Telegram bot poller (planned) | Bidirectional Telegram via `getUpdates` long-poll + Firestore command queue. Queue-based single-writer: poller writes queue only, tick processes. | §5.5, spec | 🚧 G.1 spec locked; G.2 implementation pending |
+| Phase G: Telegram bot poller | Bidirectional Telegram via `getUpdates` long-poll + Firestore command queue. Queue-based single-writer: poller writes queue only, tick processes. | §5.5, spec | 🚧 G.2 implemented; deploy pending |
 | Phase G: Google Speech-to-Text (planned) | Voice message transcription for Telegram voice notes. Cost-capped per-engagement in Firestore `usage/{YYYY-MM}`. | spec | 🚧 G.1 spec locked; G.3 implementation pending |
 | Phase G: Firestore command queue (planned) | `engagements/{eid}/commands/{update_id}` — inbound Telegram commands queued for tick processing. Idempotent via update_id as doc ID. | §3.4, spec | 🚧 G.1 spec locked; G.2 implementation pending |
 
@@ -204,6 +204,10 @@ makes the engagement invisible to the operator.**
 | `/opt/ikrs-heartbeat/venv/` | Python venv with heartbeat package + deps | 0755 | `ikrs:ikrs` |
 | `/etc/systemd/system/ikrs-heartbeat.service` | systemd unit (Type=oneshot) | 0644 | `root:root` |
 | `/etc/systemd/system/ikrs-heartbeat.timer` | systemd timer (OnUnitActiveSec=1h, Persistent) | 0644 | `root:root` |
+| `/etc/systemd/system/ikrs-heartbeat-poller.service` | Phase G bot poller (Type=simple, Restart=always, MemoryMax=150M) | 0644 | `root:root` |
+| `/etc/sudoers.d/ikrs-heartbeat` | Phase G sudoers: allows `ikrs` user to `systemctl start ikrs-heartbeat.service` | 0440 | `root:root` |
+| `/var/lib/ikrs-heartbeat/telegram-offset` | Phase G Telegram update_id offset (atomic write, crash-safe) | 0644 | `ikrs:ikrs` |
+| `/var/lib/ikrs-heartbeat/last-trigger.timestamp` | Phase G ad-hoc tick trigger rate-limit timestamp | 0644 | `ikrs:ikrs` |
 | `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-state.json` | TickState (last_tick_ts, last_action_summaries, last_vault_mtimes, ...) | 0600 | `ikrs:ikrs` |
 | `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-log.jsonl` | Append-only audit log: 1 line per tick + 1 line per action | 0644 | `ikrs:ikrs` |
 
