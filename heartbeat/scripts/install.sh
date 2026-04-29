@@ -275,11 +275,23 @@ else
   say "operator must connect Google in the Tauri app for each engagement."
 fi
 
+# Phase G: TELEGRAM_ALLOWED_CHAT_IDS defaults to the single TELEGRAM_CHAT_ID
+# from Phase E for backwards compatibility.
+TELEGRAM_ALLOWED_CHAT_IDS="${TELEGRAM_ALLOWED_CHAT_IDS:-}"
+if [[ -z "$TELEGRAM_ALLOWED_CHAT_IDS" ]] && [[ -f "$SECRETS_FILE" ]] && grep -q "^TELEGRAM_ALLOWED_CHAT_IDS=" "$SECRETS_FILE"; then
+  TELEGRAM_ALLOWED_CHAT_IDS="$(grep "^TELEGRAM_ALLOWED_CHAT_IDS=" "$SECRETS_FILE" | head -n 1 | cut -d= -f2- | tr -d '"')"
+fi
+if [[ -z "$TELEGRAM_ALLOWED_CHAT_IDS" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
+  TELEGRAM_ALLOWED_CHAT_IDS="$TELEGRAM_CHAT_ID"
+  say "defaulting TELEGRAM_ALLOWED_CHAT_IDS to TELEGRAM_CHAT_ID ($TELEGRAM_CHAT_ID)"
+fi
+
 # Now write secrets.env (idempotent rewrite — preserves prior values).
 cat > "$SECRETS_FILE" <<EOF
 GEMINI_API_KEY="$GEMINI_API_KEY"
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+TELEGRAM_ALLOWED_CHAT_IDS="$TELEGRAM_ALLOWED_CHAT_IDS"
 FIREBASE_SA_KEY_PATH="$ETC_DIR/firebase-sa.json"
 TOKEN_ENCRYPTION_KEY="$TOKEN_ENCRYPTION_KEY"
 TOKEN_ENCRYPTION_KEY_VERSION="$TOKEN_ENCRYPTION_KEY_VERSION"
@@ -329,8 +341,32 @@ if [[ -n "$VAULT_ROOT_FROM_TOML" ]]; then
   fi
 fi
 
+# Phase G: install poller service + sudoers for ad-hoc tick trigger.
+say "installing poller systemd unit"
+install -m 0644 "$HEARTBEAT_SOURCE/systemd/ikrs-heartbeat-poller.service" \
+  "$SYSTEMD_DIR/ikrs-heartbeat-poller.service"
+
+# Apply same vault-root ProtectHome fix to the poller service.
+if [[ -n "$VAULT_ROOT_FROM_TOML" ]] && [[ "$VAULT_ROOT_FROM_TOML" == /home/* ]]; then
+  sed -i 's|^ProtectHome=true|ProtectHome=false|' \
+    "$SYSTEMD_DIR/ikrs-heartbeat-poller.service"
+fi
+
+# Sudoers: allow ikrs user to start the tick service (ad-hoc trigger).
+SUDOERS_FILE="/etc/sudoers.d/ikrs-heartbeat"
+say "installing sudoers entry at $SUDOERS_FILE"
+cat > "$SUDOERS_FILE" <<'SUDOEOF'
+ikrs ALL=(root) NOPASSWD: /usr/bin/systemctl start ikrs-heartbeat.service
+SUDOEOF
+chmod 0440 "$SUDOERS_FILE"
+if ! visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
+  die "sudoers validation failed; removing $SUDOERS_FILE"
+  rm -f "$SUDOERS_FILE"
+fi
+
 systemctl daemon-reload
 systemctl enable --now ikrs-heartbeat.timer
+systemctl enable --now ikrs-heartbeat-poller.service
 
 # --------------------------------------------------------------------------- #
 # 7. Smoke test
