@@ -222,28 +222,10 @@ pub fn start_task_watch(
         .watch(&tasks_dir, RecursiveMode::NonRecursive)
         .map_err(|e| format!("notify watch {tasks_dir:?}: {e}"))?;
 
-    // Initial scan: emit synthetic task:vault-change events for
-    // every existing .md file in 02-tasks/. `notify` fires only on
-    // filesystem changes, so a watcher started after files were
-    // written (legacy imports, etc.) would never sync them.
-    //
-    // 2026-04-29 fix: the previous implementation tried to spawn an
-    // async task via `tokio::runtime::Handle::try_current()`, which
-    // silently failed when `start_task_watch` ran outside a tokio
-    // context (common for synchronous Tauri commands). This caused
-    // the initial scan to be SKIPPED — files written by Claude
-    // before the user opened the Tasks tab never appeared in the
-    // Kanban. Fix: run the scan synchronously on a std::thread so
-    // it works regardless of tokio context. The scan is I/O-bound
-    // (read files, emit events) and typically < 50ms for < 100 files.
-    // Run on a std::thread — no tokio runtime required. The scan is
-    // I/O-bound (read files, emit events) and typically < 50ms.
-    let scan_app = app.clone();
-    let scan_tasks_dir = tasks_dir.clone();
-    let scan_engagement_id = engagement_id.clone();
-    std::thread::spawn(move || {
-        emit_initial_scan_sync(&scan_app, &scan_tasks_dir, &scan_engagement_id);
-    });
+    // Initial scan is NOT auto-triggered here. The frontend calls
+    // `trigger_task_scan` AFTER attaching its event listener. This
+    // prevents a race where scan events fire before the JS listener
+    // subscribes (2026-04-29: lost 5 of 8 events in production).
     let scan_handle: Option<tokio::task::JoinHandle<()>> = None;
 
     let active = ActiveWatcher {
@@ -346,6 +328,30 @@ fn emit_initial_scan_sync(
 #[tauri::command]
 pub fn stop_task_watch(state: State<'_, TaskWatchState>) -> Result<(), String> {
     *state.0.lock().unwrap() = None;
+    Ok(())
+}
+
+/// Trigger the initial scan for the active watcher. The frontend
+/// MUST call this AFTER subscribing to `task:vault-change` events,
+/// so events from the scan are not lost.
+///
+/// 2026-04-29: split from `start_task_watch` to fix a race where
+/// scan events fired before the JS listener was attached, causing
+/// 5 of 8 task files to silently not sync to Firestore.
+#[tauri::command]
+pub fn trigger_task_scan(
+    app: AppHandle,
+    state: State<'_, TaskWatchState>,
+) -> Result<(), String> {
+    let guard = state.0.lock().unwrap();
+    let active = guard
+        .as_ref()
+        .ok_or("no active watcher — call start_task_watch first")?;
+    let tasks_dir = active.tasks_dir.clone();
+    let engagement_id = active.engagement_id.clone();
+    drop(guard); // release lock before I/O
+
+    emit_initial_scan_sync(&app, &tasks_dir, &engagement_id);
     Ok(())
 }
 

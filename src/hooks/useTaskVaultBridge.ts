@@ -250,6 +250,18 @@ export function useTaskVaultBridge() {
         return;
       }
       unlistenRef.current = unlisten;
+
+      // 2026-04-29: trigger the initial scan AFTER the listener is
+      // attached. Previously the scan ran inside start_task_watch
+      // (on a std::thread), racing the listener — 5 of 8 events
+      // were lost because they fired before listen() returned.
+      try {
+        await invoke("trigger_task_scan");
+      } catch (e) {
+        // Non-fatal: watcher still fires on new filesystem events.
+        // eslint-disable-next-line no-console
+        console.warn("[task-watch] initial scan trigger failed", e);
+      }
     };
 
     void setup();
