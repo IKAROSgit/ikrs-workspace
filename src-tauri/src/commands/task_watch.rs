@@ -227,34 +227,24 @@ pub fn start_task_watch(
     // filesystem changes, so a watcher started after files were
     // written (legacy imports, etc.) would never sync them.
     //
-    // 2026-04-23 crash fix: `start_task_watch` is a synchronous
-    // Tauri command, so it doesn't always execute inside a tokio
-    // runtime context. Calling `tokio::spawn` unconditionally
-    // panicked with "there is no reactor running in this context"
-    // which aborted the whole app the moment the user opened the
-    // tasks tab. Now we try to get the current tokio Handle — if
-    // one exists, we spawn onto it; otherwise we skip the scan
-    // (the watcher still runs on filesystem events). Skipping
-    // initial sync is strictly better than crashing; users can
-    // `touch <file>` or edit-and-save to trigger a real notify
-    // event if they really need to re-sync a stale vault.
-    let scan_handle = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            let scan_app = app.clone();
-            let scan_tasks_dir = tasks_dir.clone();
-            let scan_engagement_id = engagement_id.clone();
-            Some(handle.spawn(async move {
-                emit_initial_scan(&scan_app, &scan_tasks_dir, &scan_engagement_id).await;
-            }))
-        }
-        Err(_) => {
-            log::warn!(
-                "start_task_watch: no tokio runtime in context — skipping initial scan. \
-                 Watcher will still fire on new filesystem events."
-            );
-            None
-        }
-    };
+    // 2026-04-29 fix: the previous implementation tried to spawn an
+    // async task via `tokio::runtime::Handle::try_current()`, which
+    // silently failed when `start_task_watch` ran outside a tokio
+    // context (common for synchronous Tauri commands). This caused
+    // the initial scan to be SKIPPED — files written by Claude
+    // before the user opened the Tasks tab never appeared in the
+    // Kanban. Fix: run the scan synchronously on a std::thread so
+    // it works regardless of tokio context. The scan is I/O-bound
+    // (read files, emit events) and typically < 50ms for < 100 files.
+    // Run on a std::thread — no tokio runtime required. The scan is
+    // I/O-bound (read files, emit events) and typically < 50ms.
+    let scan_app = app.clone();
+    let scan_tasks_dir = tasks_dir.clone();
+    let scan_engagement_id = engagement_id.clone();
+    std::thread::spawn(move || {
+        emit_initial_scan_sync(&scan_app, &scan_tasks_dir, &scan_engagement_id);
+    });
+    let scan_handle: Option<tokio::task::JoinHandle<()>> = None;
 
     let active = ActiveWatcher {
         engagement_id,
@@ -270,9 +260,13 @@ pub fn start_task_watch(
 /// Walk the 02-tasks/ directory once on watcher start and emit a
 /// synthetic `task:vault-change` event per .md file so the
 /// frontend's Firestore-sync handler can ingest pre-existing files.
-/// Parse failures are logged and skipped — they'll re-attempt on
-/// the next real notify event after the user/Claude fixes them.
-async fn emit_initial_scan(
+///
+/// Synchronous — runs on a std::thread, no tokio runtime required.
+/// This fixes a bug where the previous async version silently
+/// skipped the scan when `start_task_watch` ran outside a tokio
+/// context, causing Claude-written task files to never appear in
+/// the Kanban.
+fn emit_initial_scan_sync(
     app: &AppHandle,
     tasks_dir: &std::path::Path,
     engagement_id: &str,
@@ -332,10 +326,10 @@ async fn emit_initial_scan(
         };
         let _ = app.emit("task:vault-change", &payload);
         emitted += 1;
-        // Yield between emits so a huge vault (1000s of tasks)
-        // doesn't starve the UI thread / Firestore writer.
+        // Brief sleep between batches so a huge vault (1000s of
+        // tasks) doesn't flood the event channel.
         if emitted % 25 == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
     if emitted > 0 {
