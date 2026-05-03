@@ -80,8 +80,9 @@ function uint8ToBase64(bytes: Uint8Array): string {
  * Called from SettingsView / ChatView after oauth:token-stored fires.
  * The token payload is read from the keychain via getCredential().
  *
- * Silently no-ops if the encryption key is not configured (operator
- * hasn't set up Phase F yet — backwards-compatible with Phase E).
+ * THROWS if the encryption key is missing. The caller should surface
+ * this to the user — a missing key means Firestore sync is broken
+ * and the heartbeat will never see the new token.
  */
 export async function syncTokenToFirestore(
   engagementId: string,
@@ -89,10 +90,13 @@ export async function syncTokenToFirestore(
 ): Promise<void> {
   const keyBytes = getEncryptionKey();
   if (!keyBytes) {
-    console.warn(
-      "[firestore-tokens] VITE_TOKEN_ENCRYPTION_KEY not set; skipping Firestore token sync.",
+    throw new Error(
+      "VITE_TOKEN_ENCRYPTION_KEY is missing or malformed in .env.local. " +
+      "OAuth succeeded but the token was NOT synced to Firestore — " +
+      "the heartbeat will not see this token. " +
+      "Add the encryption key from the VM's /etc/ikrs-heartbeat/secrets.env " +
+      "to .env.local and rebuild. See heartbeat/README.md.",
     );
-    return;
   }
 
   const { ciphertext, iv } = await encrypt(tokenPayloadJson, keyBytes);

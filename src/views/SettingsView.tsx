@@ -209,7 +209,13 @@ export default function SettingsView() {
             await syncTokenToFirestore(activeEngagementId, payload);
           }
         } catch (e) {
-          console.warn("[Phase F] Firestore token sync failed (non-fatal):", e);
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("[Phase F] Firestore token sync failed:", msg);
+          alert(
+            "Google connected, but Firestore sync failed:\n\n" +
+            msg + "\n\n" +
+            "The heartbeat will NOT see this token until fixed.",
+          );
         }
       }
 

@@ -59,8 +59,11 @@ sudo ./scripts/install.sh
 # 3. On the Mac, open IKAROS Workspace app → Settings → Connect Google
 #    for each engagement. Tokens auto-sync to Firestore.
 
-# 4. Copy the encryption key to the Mac's .env.local:
+# 4. CRITICAL: Copy the encryption key to the Mac's .env.local:
 #    VITE_TOKEN_ENCRYPTION_KEY=<the key printed during install>
+#    Without this, the Mac app build will FAIL (check-env.mjs guard).
+#    Without this at runtime, OAuth succeeds but Firestore sync fails
+#    silently — the heartbeat never sees the token.
 
 # 5. Verify
 sudo systemctl status ikrs-heartbeat.timer

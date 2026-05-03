@@ -710,7 +710,14 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
     always refreshes on its own (since the Firestore copy is stale).
     This is safe but creates one extra Google API call per tick. Fixing
     requires a Rust→JS event bridge for every refresh — deferred.
-12. **No automated key rotation script.** Key rotation is a manual
+12. **`VITE_TOKEN_ENCRYPTION_KEY` is a build-time requirement.**
+    Without it in `.env.local`, the Mac app builds but OAuth-success
+    Firestore writes silently fail (now surfaced as an alert post-fix).
+    `scripts/check-env.mjs` blocks builds if the key is missing.
+    Flow: VM install generates key → operator copies to `.env.local` →
+    rebuild. If missed, the heartbeat reads a stale/wrong token from
+    Firestore (the Phase F.8 soak caught this exact failure mode).
+13. **No automated key rotation script.** Key rotation is a manual
     procedure (see §5.4 runbook). A future script could iterate all
     engagement `google_tokens` docs, decrypt with old key, re-encrypt
     with new key, and update Firestore — but the manual procedure
