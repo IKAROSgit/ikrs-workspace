@@ -795,8 +795,10 @@ Deleting an engagement via Firebase Console does NOT remove:
 
 Tasks become orphans — invisible to the Kanban UI but consuming storage.
 
-**Mitigation (shipped):** `import-orphan-vault-tasks.py` for recovery.
-**Mitigation (planned):** Task 2 orphan detection UI at app startup.
+**Mitigation (shipped):** `import-orphan-vault-tasks.py` for CLI recovery.
+**Mitigation (shipped):** In-app orphan detection UI in Settings
+(`OrphanVaultsCard`) — scans on mount, shows import-into-engagement
+dropdown, confirmation dialog, idempotent import.
 **Lesson:** Delete UIs (when built) MUST cascade or warn explicitly.
 Orphan detection at startup is a hard requirement, not polish.
 
