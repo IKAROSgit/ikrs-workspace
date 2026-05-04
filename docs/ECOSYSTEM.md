@@ -764,6 +764,55 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
     (let the heartbeat auto-re-encrypt on next tick) works for the
     current single-operator deployment.
 
+## 7b. Known hazards & lessons learned
+
+### Hazard 1: Phase F three-bug stack (Issue B, fixed 2026-05-03)
+
+Three bugs compounded to deliver wrong-inbox content for 5 days:
+
+1. `migrate-token-to-firestore.py` uploaded the legacy @ikaros.ae
+   bootstrap token to Firestore (correct behavior — it migrates
+   what's on disk, not what's in keychain). This was expected.
+2. `syncTokenToFirestore()` was `console.warn` + `return` on missing
+   `VITE_TOKEN_ENCRYPTION_KEY`. Tauri reconnect with @blr-world.com
+   succeeded in keychain but silently failed to overwrite Firestore.
+   **Fixed in da2722f:** now throws + alerts the user.
+3. The `check-env.mjs` prebuild guard didn't include
+   `VITE_TOKEN_ENCRYPTION_KEY` in the REQUIRED list, so builds
+   succeeded without it. **Fixed in da2722f:** now blocks the build.
+
+**Lesson:** Any new config key that gates a critical write path MUST:
+- Hard-fail (throw, not warn) when missing at runtime
+- Be in the prebuild guard so builds fail without it
+- Have a deploy-verification step (either in install.sh or a smoke test)
+
+### Hazard 2: Engagement deletion does not cascade
+
+Deleting an engagement via Firebase Console does NOT remove:
+- Vault folders on the Mac filesystem (`~/.ikrs-workspace/vaults/<slug>/`)
+- `ikrs_tasks` documents scoped to that engagement
+- `taskNotes`, `google_tokens`, or `heartbeat_health` subcollections
+
+Tasks become orphans — invisible to the Kanban UI but consuming storage.
+
+**Mitigation (shipped):** `import-orphan-vault-tasks.py` for recovery.
+**Mitigation (planned):** Task 2 orphan detection UI at app startup.
+**Lesson:** Delete UIs (when built) MUST cascade or warn explicitly.
+Orphan detection at startup is a hard requirement, not polish.
+
+### Hazard 3: Token-state divergence (keychain vs Firestore)
+
+The Mac keychain and Firestore `google_tokens` can diverge if:
+- Migration script runs before any Tauri OAuth flow
+- Operator re-OAuths on Mac but `VITE_TOKEN_ENCRYPTION_KEY` is missing
+- Heartbeat refreshes a token that Tauri also refreshes simultaneously
+
+**Symptom:** Heartbeat surfaces wrong-inbox content.
+**Verification:** `heartbeat/scripts/verify-engagement-account.py`
+— SSH to VM, call Gmail `users.getProfile()`, confirm emailAddress.
+**Fix:** Operator disconnects + reconnects Google in Tauri Settings
+(with encryption key present in `.env.local`).
+
 ## 8. Update protocol — how to keep this doc honest
 
 When you submit a change that touches:
