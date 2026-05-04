@@ -41,7 +41,10 @@ prompt_version = "tick_prompt.v1"
 
 [llm]
 provider = "gemini"           # "gemini" (Tier II default) | "claude" (deferred to commercial)
-model = "gemini-2.5-pro"
+# Default to Flash. Pro is 8-15x more expensive per token at heartbeat
+# scale (~720 ticks/month); only switch to Pro if you measurably need
+# Pro-tier reasoning quality for your engagement's domain.
+model = "gemini-2.5-flash"
 temperature = 0.2
 max_output_tokens = 4096
 
