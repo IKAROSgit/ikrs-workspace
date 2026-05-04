@@ -866,3 +866,159 @@ mod tests {
         let _ = fs::remove_dir_all(&sibling);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Task 2: Orphan vault detection + import
+// ---------------------------------------------------------------------------
+
+/// A vault folder on disk that doesn't match any known engagement slug.
+#[derive(Debug, Serialize, Clone)]
+pub struct OrphanVault {
+    pub slug: String,
+    pub path: String,
+    pub task_count: usize,
+    pub last_modified: Option<String>,
+}
+
+/// Scan ~/.ikrs-workspace/vaults/ for folders whose slug doesn't
+/// appear in `known_slugs`. Returns orphaned vaults with task counts.
+///
+/// `known_slugs` is passed from the frontend (which has the client
+/// registry from Firestore) — keeps Rust free of Firestore deps.
+#[tauri::command]
+pub fn scan_orphan_vaults(known_slugs: Vec<String>) -> Result<Vec<OrphanVault>, String> {
+    let base = vault_base();
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = fs::read_dir(&base)
+        .map_err(|e| format!("read vaults dir: {e}"))?;
+
+    let known: std::collections::HashSet<String> = known_slugs.into_iter().collect();
+    let mut orphans = Vec::new();
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // Skip symlinks — prevent traversal via symlinked dirs
+        if path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            continue;
+        }
+        let slug = match path.file_name().and_then(|n| n.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        // Skip dotfiles
+        if slug.starts_with('.') {
+            continue;
+        }
+        if known.contains(&slug) {
+            continue;
+        }
+
+        // Count .md files in 02-tasks/
+        let tasks_dir = path.join("02-tasks");
+        let task_count = if tasks_dir.exists() {
+            fs::read_dir(&tasks_dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.path().extension().and_then(|x| x.to_str()) == Some("md")
+                                && !e.file_name().to_string_lossy().starts_with('.')
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let last_modified = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| {
+                let dur = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+                Some(chrono::DateTime::from_timestamp(dur.as_secs() as i64, 0)?
+                    .to_rfc3339())
+            });
+
+        orphans.push(OrphanVault {
+            slug,
+            path: path.to_string_lossy().to_string(),
+            task_count,
+            last_modified,
+        });
+    }
+
+    Ok(orphans)
+}
+
+/// Import task .md files from an orphan vault into a destination vault.
+/// Idempotent: skips files that already exist in the destination.
+/// Returns the count of files imported.
+#[tauri::command]
+pub fn import_orphan_vault(
+    source_slug: String,
+    dest_slug: String,
+) -> Result<ImportResult, String> {
+    let source = vault_path_for_slug(&source_slug)?;
+    let dest = vault_path_for_slug(&dest_slug)?;
+
+    let src_tasks = source.join("02-tasks");
+    let dst_tasks = dest.join("02-tasks");
+
+    if !src_tasks.exists() {
+        return Ok(ImportResult { imported: 0, skipped: 0 });
+    }
+    fs::create_dir_all(&dst_tasks)
+        .map_err(|e| format!("create dest 02-tasks: {e}"))?;
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+
+    let entries = fs::read_dir(&src_tasks)
+        .map_err(|e| format!("read source 02-tasks: {e}"))?;
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("md") {
+            continue;
+        }
+        let name = match path.file_name() {
+            Some(n) => n.to_owned(),
+            None => continue,
+        };
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+
+        let target = dst_tasks.join(&name);
+        if target.exists() {
+            skipped += 1;
+            continue;
+        }
+
+        fs::copy(&path, &target)
+            .map_err(|e| format!("copy {}: {e}", name.to_string_lossy()))?;
+        imported += 1;
+    }
+
+    Ok(ImportResult { imported, skipped })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+}

@@ -113,6 +113,8 @@ pub fn run() {
             commands::vault::list_recent_vault_notes,
             commands::vault::ensure_engagement_scaffold,
             commands::vault::read_engagement_memory,
+            commands::vault::scan_orphan_vaults,
+            commands::vault::import_orphan_vault,
             commands::memory_cmd::distill_session_memory,
             // Claude M2 — embedded subprocess
             claude::auth::claude_version_check,
