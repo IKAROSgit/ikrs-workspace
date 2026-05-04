@@ -21,7 +21,11 @@ import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
 import { HeartbeatStatusCard } from "@/components/heartbeat/HeartbeatStatusCard";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import { syncTokenToFirestore } from "@/lib/firestore-tokens";
+import {
+  getConnectedEmail,
+  refreshConnectedEmail,
+  syncTokenToFirestore,
+} from "@/lib/firestore-tokens";
 import type { SkillUpdateParams } from "@/types/skills";
 
 // Keep in sync with ChatView.tsx GOOGLE_SCOPES. 2026-04-20:
@@ -55,6 +59,8 @@ export default function SettingsView() {
   const [oauthStatus, setOauthStatus] = useState<
     "idle" | "pending" | "success" | "error"
   >("idle");
+  const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
+  const [refreshingEmail, setRefreshingEmail] = useState(false);
 
   // Hydrate OAuth connection state from the OS keychain whenever the
   // active engagement changes. Prior behaviour: `oauthStatus` was
@@ -75,8 +81,16 @@ export default function SettingsView() {
         if (!cancelled) {
           setOauthStatus(value ? "success" : "idle");
         }
+        // Load cached email from Firestore
+        if (value && !cancelled) {
+          const email = await getConnectedEmail(activeEngagementId);
+          if (!cancelled) setConnectedEmail(email);
+        }
       } catch {
-        if (!cancelled) setOauthStatus("idle");
+        if (!cancelled) {
+          setOauthStatus("idle");
+          setConnectedEmail(null);
+        }
       }
     })();
     return () => {
@@ -168,6 +182,26 @@ export default function SettingsView() {
     }
   };
 
+  const handleRefreshEmail = async () => {
+    if (!activeEngagementId) return;
+    setRefreshingEmail(true);
+    try {
+      const key = makeKeychainKey(activeEngagementId, "google");
+      const raw = await getCredential(key);
+      if (!raw) return;
+      const payload = JSON.parse(raw);
+      const email = await refreshConnectedEmail(
+        activeEngagementId,
+        payload.access_token,
+      );
+      setConnectedEmail(email);
+    } catch (e) {
+      console.warn("[Settings] email refresh failed:", e);
+    } finally {
+      setRefreshingEmail(false);
+    }
+  };
+
   const handleConnectGoogle = async () => {
     if (!activeEngagementId) return;
     setOauthStatus("pending");
@@ -217,6 +251,12 @@ export default function SettingsView() {
             "The heartbeat will NOT see this token until fixed.",
           );
         }
+      }
+
+      if (success) {
+        // Read back the connectedEmail that syncTokenToFirestore cached
+        const email = await getConnectedEmail(activeEngagementId);
+        setConnectedEmail(email);
       }
 
       setOauthStatus(success ? "success" : "error");
@@ -311,9 +351,24 @@ export default function SettingsView() {
                   : "Connect Google Account"}
               </Button>
               {oauthStatus === "success" && (
-                <p className="text-green-500 text-sm">
-                  Connected successfully.
-                </p>
+                <div className="text-sm space-y-1">
+                  {connectedEmail ? (
+                    <p className="text-green-500">
+                      Connected as <strong>{connectedEmail}</strong>
+                    </p>
+                  ) : (
+                    <p className="text-green-500">
+                      Connected — email unknown{" "}
+                      <button
+                        className="underline text-xs text-muted-foreground hover:text-foreground ml-1"
+                        onClick={handleRefreshEmail}
+                        disabled={refreshingEmail}
+                      >
+                        {refreshingEmail ? "Refreshing..." : "Refresh"}
+                      </button>
+                    </p>
+                  )}
+                </div>
               )}
               {oauthStatus === "error" && (
                 <p className="text-red-500 text-sm">

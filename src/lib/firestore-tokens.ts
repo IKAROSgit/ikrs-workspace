@@ -14,7 +14,7 @@
  * (WebCrypto's default output format).
  */
 
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 const KEY_ENV = import.meta.env.VITE_TOKEN_ENCRYPTION_KEY ?? "";
@@ -101,6 +101,24 @@ export async function syncTokenToFirestore(
 
   const { ciphertext, iv } = await encrypt(tokenPayloadJson, keyBytes);
 
+  // Fetch the connected email before writing — we'll store it as
+  // an unencrypted field for UI display (not sensitive; just the
+  // email address, not the token).
+  let connectedEmail: string | null = null;
+  try {
+    const payload = JSON.parse(tokenPayloadJson);
+    const resp = await fetch(
+      "https://www.googleapis.com/oauth2/v3/userinfo",
+      { headers: { Authorization: `Bearer ${payload.access_token}` } },
+    );
+    if (resp.ok) {
+      const info = await resp.json();
+      connectedEmail = info.email ?? null;
+    }
+  } catch {
+    // Non-fatal — email will show as "unknown" in UI
+  }
+
   const ref = doc(db, "engagements", engagementId, "google_tokens", "google");
   await setDoc(ref, {
     ciphertext,
@@ -108,5 +126,45 @@ export async function syncTokenToFirestore(
     keyVersion: KEY_VERSION,
     updatedAt: serverTimestamp(),
     writtenBy: "tauri",
+    ...(connectedEmail ? { connectedEmail } : {}),
   });
+}
+
+/**
+ * Read the cached connectedEmail from the google_tokens doc.
+ * Returns null if not set or doc doesn't exist.
+ */
+export async function getConnectedEmail(
+  engagementId: string,
+): Promise<string | null> {
+  const ref = doc(db, "engagements", engagementId, "google_tokens", "google");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return (snap.data()?.connectedEmail as string) ?? null;
+}
+
+/**
+ * Refresh the connectedEmail by calling userinfo with the current
+ * access token from keychain, then updating the Firestore doc.
+ */
+export async function refreshConnectedEmail(
+  engagementId: string,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      "https://www.googleapis.com/oauth2/v3/userinfo",
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!resp.ok) return null;
+    const info = await resp.json();
+    const email = info.email as string | undefined;
+    if (!email) return null;
+
+    const ref = doc(db, "engagements", engagementId, "google_tokens", "google");
+    await updateDoc(ref, { connectedEmail: email });
+    return email;
+  } catch {
+    return null;
+  }
 }
