@@ -19,6 +19,7 @@ import {
 } from "@/lib/tauri-commands";
 import { SkillStatusPanel } from "@/components/skills/SkillStatusPanel";
 import { HeartbeatStatusCard } from "@/components/heartbeat/HeartbeatStatusCard";
+import { OrphanVaultsCard } from "@/components/settings/OrphanVaultsCard";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -385,6 +386,8 @@ export default function SettingsView() {
       )}
 
       <HeartbeatStatusCard />
+
+      <OrphanVaultsCard />
 
       <Card>
         <CardHeader>
