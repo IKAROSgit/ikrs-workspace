@@ -88,7 +88,10 @@ Then for each space: chat.spaces.messages.list
 Params: filter="createTime > <24h_ago_rfc3339>"
 ```
 Note: conversations requiring Moe's input, @mentions, action items.
-If Chat API returns 403 (scopes not granted), log warning and skip.
+If Chat API returns 403 (scopes not granted) or the MCP tool is not
+available, log warning to audit and skip this surface. Same for Calendar
+if its MCP is not configured. Surface unavailability is NOT a session
+failure — degrade gracefully and continue with available surfaces.
 
 ### Vault diff
 Walk `02-tasks/*.md` for status changes since last session.
@@ -100,6 +103,9 @@ daily budget estimate (default: 25,000 tokens), trigger cap-hit
 procedure (see below).
 
 ## Phase 3 — Memory updates
+
+**Kill-switch re-check:** Before writing anything, check if
+`operations/right-hand/KILL` exists. If so, log to audit and exit.
 
 For each new piece of information discovered in Phase 2:
 
@@ -121,6 +127,14 @@ For each new piece of information discovered in Phase 2:
 
 If the file already exists, read it first, merge new information
 (never discard existing content), then write the merged version.
+
+### Post-write validation
+After writing each memory file, read it back and verify:
+1. File starts with `---` on line 1
+2. Contains a second `---` delimiter within the first 10 lines
+3. `last_updated` and `updated_by` keys are present in frontmatter
+If validation fails, revert to the `.tmp` backup and log a warning
+to audit. Do NOT leave a malformed file in place.
 
 ## Phase 4 — Daily brief
 
@@ -149,6 +163,9 @@ If you only do one thing today: [specific, actionable recommendation]
 ```
 
 ## Phase 5 — Draft generation
+
+**Kill-switch re-check:** Before writing any drafts, check if
+`operations/right-hand/KILL` exists. If so, log to audit and exit.
 
 For items surfaced in Phase 4 that have obvious next-actions:
 
@@ -200,10 +217,20 @@ Final line of every session:
 
 ## Cap-hit handling
 
-If at any point the session estimates it has consumed >80% of the daily
-token budget, OR if any API call returns HTTP 429 / rate-limit:
+### Distinguishing 429 sources (adversarial fix #5)
 
-1. **Write checkpoint:**
+- **Google API 429** (Gmail, Calendar, Chat, Drive): This is a transient
+  rate limit. Retry with exponential backoff up to 3 times over 2
+  minutes. This is NOT a cap-hit. Continue the session after success.
+- **Anthropic API 429 / Claude process exit**: This is a real quota
+  exhaustion. Trigger the cap-hit procedure below.
+- **Token estimate > 80% of daily budget** (default 25,000 tokens):
+  Pre-emptive cap-hit — exit before actually hitting the wall.
+
+### Cap-hit procedure
+
+1. **Write checkpoint (atomic — adversarial fix #4):**
+   Write to `checkpoint.json.tmp`, then rename to `checkpoint.json`:
    ```json
    {
      "date": "YYYY-MM-DD",
@@ -213,25 +240,18 @@ token budget, OR if any API call returns HTTP 429 / rate-limit:
        "surfaces_remaining": ["list", "of", "pending"],
        "memory_updates_pending": ["list/of/files.md"]
      },
-     "tokens_used_estimate": <number>,
-     "resume_after": "<ISO-8601 timestamp, +3h from now>"
+     "tokens_used_estimate": <number>
    }
    ```
 
-2. **Register resume task:** via scheduled-tasks MCP:
-   ```
-   schedule_task(
-     name: "right-hand-resume",
-     time: <resume_after>,
-     prompt: "Resume the right-hand daily session from checkpoint."
-   )
-   ```
+2. **Audit:** Log `{"action":"cap_hit","phase":<n>,...}`
 
-3. **Audit:** Log `{"action":"cap_hit","phase":<n>,...}`
+3. **Exit cleanly.** Do NOT retry in a loop. The next daily session
+   (tomorrow 05:00 via launchd) will read the checkpoint and resume
+   from `last_completed_phase + 1`. Memory updates already written
+   in earlier phases are preserved.
 
-4. **Exit cleanly.** Do NOT retry in a loop.
-
-### Cap-hit false-positive guard
-A single transient 429 is NOT a cap hit. Retry once after 30 seconds.
-If the retry also fails with 429, THEN trigger cap-hit. This prevents
-a brief rate-limit blip from aborting the entire session.
+### Phase 0 checkpoint recovery (adversarial fix #4)
+If `checkpoint.json` exists but fails to parse as valid JSON, delete
+it, log a warning to audit, and start a fresh session. Never crash
+on a corrupt checkpoint.

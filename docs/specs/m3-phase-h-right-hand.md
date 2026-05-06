@@ -187,19 +187,44 @@ phases, continues from `last_completed_phase + 1`.
 
 ## 7. Schedule registration
 
-The daily session is registered via the `scheduled-tasks` MCP server
-(available in Claude Code). The operator (or an initial setup session)
-calls:
+The daily session is registered via macOS `launchd` (not an MCP server
+— adversarial challenge #2 found that no scheduling MCP exists).
 
-```
-schedule_task(
-  name: "right-hand-daily",
-  schedule: "0 5 * * *",  // 05:00 local daily
-  prompt: <contents of operations/right-hand/daily-prompt.md>
-)
+The operator creates a launchd plist at
+`~/Library/LaunchAgents/ae.ikaros.right-hand-daily.plist`:
+
+```xml
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ae.ikaros.right-hand-daily</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/claude</string>
+    <string>-p</string>
+    <string>Run the right-hand daily session from operations/right-hand/daily-prompt.md</string>
+    <string>--allowedTools</string>
+    <string>Read,Write,Edit,Glob,Grep,mcp__*</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/bigmac/.ikrs-workspace/vaults/blr-world-com</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>5</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/right-hand-daily.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/right-hand-daily.err</string>
+</dict>
+</plist>
 ```
 
-The MCP server manages scheduling, wake, and subprocess spawn.
+Cap-hit resume: the checkpoint is read on the next daily boot (next
+05:00). No intra-day resume scheduling — if cap-hit happens, the
+session's partial work (memory updates already written) is preserved
+and the remainder runs the next day.
 
 ## 8. Cost notes
 
@@ -215,7 +240,18 @@ quality and cost). Operator can override in the prompt template.
 
 ## 9. Adversarial challenge findings
 
-_Placeholder — populated after H.6 adversarial challenge runs._
+Challenge found 2 showstoppers + 4 blocks + 2 warns. All addressed:
+
+| # | Severity | Issue | Resolution |
+|---|---|---|---|
+| 1 | SHOWSTOPPER | `settings.local.json` grants bare `Write`/`Edit` without path scoping; prompt-only path guard is insufficient | **Accepted risk for v1.** Claude Code's `--disallowed-tools Bash` blocks shell. Write/Edit are needed for memory + drafts. A path-scoped allowlist would be ideal but requires Tauri-side enforcement (Phase H+). The prompt's path traversal instruction is defense-in-depth, not the sole barrier. |
+| 2 | SHOWSTOPPER | `scheduled-tasks` MCP does not exist; cap-hit resume is unimplementable | **Redesigned.** Cap-hit now writes checkpoint only. Resume uses a "retry on next boot" strategy: the next daily session (launched via launchd plist, not MCP) reads the checkpoint. No scheduling MCP dependency. Daily schedule itself registered via macOS `launchd` plist, not MCP. |
+| 3 | BLOCK | Kill-switch checked only at boot; no mid-session re-check | **Fixed in prompt.** Kill-switch re-check added before Phase 3 (memory writes) and Phase 5 (draft generation). |
+| 4 | BLOCK | Checkpoint write not atomic; no parse-failure recovery | **Fixed in prompt.** Checkpoint now uses atomic temp+rename pattern. Phase 0 boot: if JSON parse fails, delete corrupt checkpoint, log warning, start fresh. |
+| 5 | BLOCK | Google 429 vs Anthropic 429 conflated | **Fixed in prompt.** Explicit distinction: Google API 429 = retry with backoff up to 3 times (not cap-hit). Anthropic 429 / process exit = real cap-hit. |
+| 6 | BLOCK | No post-write validation of YAML frontmatter | **Fixed in prompt.** Post-write read-back validation: check `---` delimiters, required keys. On failure, revert to `.tmp` backup, log warning. |
+| 7 | WARN | Distiller and Phase H write to disjoint paths; assumption undocumented | Documented in spec §10 as architectural constraint. |
+| 8 | WARN | Calendar + Chat MCP not available in current session config | Phase 2 now has explicit "if MCP tool not available, skip surface with audit log" guard. Calendar and Chat degradation is acceptable for v1. |
 
 ## 10. Open questions / future hardening
 
@@ -231,6 +267,12 @@ _Placeholder — populated after H.6 adversarial challenge runs._
 4. **Notification on brief ready:** After Phase 4, push a Telegram
    notification: "Daily brief ready at operations/right-hand/briefs/
    YYYY-MM-DD.md". Requires Phase G bot poller integration.
-5. **Memory size management:** As memory grows over months, Phase 1
+5. **Distiller path disjointness:** Phase H writes to `operations/memory/`
+   (repo-level). The interactive session distiller writes to
+   `_memory/` (vault-level). These are disjoint today. If Phase H
+   ever needs to update `_memory/` files, a coordination mechanism
+   is required (the distiller runs asynchronously for up to 90s after
+   session end, overlapping with a 05:00 Phase H launch).
+6. **Memory size management:** As memory grows over months, Phase 1
    (memory refresh) will consume increasing tokens. Consider a monthly
    compaction pass that archives old entries.
