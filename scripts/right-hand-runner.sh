@@ -45,16 +45,15 @@ echo "[right-hand] prompt: $PROMPT_FILE"
 
 cd "$VAULT_ROOT"
 
-# Read the prompt template and pass as the -p argument.
+# Pass prompt via stdin — avoids word-splitting on YAML frontmatter
+# delimiters (---) which claude CLI misparses as flags.
 # --allowedTools: filesystem + MCP tools only, no Bash.
-# --model: sonnet for cost/quality balance (operator can override in prompt).
-PROMPT_CONTENT=$(cat "$PROMPT_FILE")
-
 "$CLAUDE_BIN" \
-  -p "$PROMPT_CONTENT" \
+  -p \
   --allowedTools "Read,Write,Edit,Glob,Grep,mcp__*" \
   --output-format text \
   --max-turns 50 \
+  < "$PROMPT_FILE" \
   2>>"$LOG_DIR/stderr-$DATE.log" \
   >>"$LOG_DIR/stdout-$DATE.log"
 
