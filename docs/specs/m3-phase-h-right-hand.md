@@ -276,3 +276,48 @@ Challenge found 2 showstoppers + 4 blocks + 2 warns. All addressed:
 6. **Memory size management:** As memory grows over months, Phase 1
    (memory refresh) will consume increasing tokens. Consider a monthly
    compaction pass that archives old entries.
+
+## 11. Operations
+
+### launchd plist
+
+File: `scripts/com.ikaros.right-hand.plist`
+Install target: `~/Library/LaunchAgents/com.ikaros.right-hand.plist`
+
+Fires daily at 16:00 Mac-local (PST) = 04:00 Dubai (UTC+4). If the
+Mac's timezone changes, update the `Hour` value in the plist.
+
+The plist invokes `scripts/right-hand-runner.sh` (a wrapper that
+sources env, cd's to the vault, and calls `claude -p` with the daily
+prompt). The wrapper pattern keeps the plist stable — invocation logic
+evolves in the script, not the XML.
+
+**Wake-from-sleep:** launchd does NOT wake the Mac from sleep.
+Options: (a) `pmset schedule wake` as a separate cron (fragile —
+cancelled by reboot), (b) the operator leaves the Mac awake overnight
+(current approach — Mac is always plugged in at the desk), (c) the
+`RunAtLoad` + missed-fire behaviour of launchd catches up after wake
+(launchd fires the job as soon as the Mac wakes if the interval was
+missed). Option (c) is the default — no extra setup needed.
+
+### Operator commands
+
+```bash
+# Install (DO NOT run until memory is seeded via H.1)
+cp scripts/com.ikaros.right-hand.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+
+# Verify
+launchctl list | grep right-hand
+
+# Manual test fire
+launchctl start com.ikaros.right-hand
+
+# View logs
+tail -f ~/Library/Logs/ikaros-right-hand/stdout-$(date +%Y-%m-%d).log
+tail -f ~/Library/Logs/ikaros-right-hand/stderr-$(date +%Y-%m-%d).log
+
+# Uninstall
+launchctl unload ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+rm ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+```

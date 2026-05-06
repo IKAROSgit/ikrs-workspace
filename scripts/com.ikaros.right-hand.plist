@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  IKAROS Right-Hand Daily Session — launchd plist.
+
+  Fires daily at 16:00 Mac-local (= 04:00 Dubai, UTC+4).
+  NOTE: If the Mac's timezone changes, update the Hour value.
+  Formula: Dubai_hour - (UTC_offset_of_Mac_TZ).
+  PST (UTC-8): 4 - (-8) = 12 → but accounting for date wrap: 4+8 = 12 next day
+  Actually: 04:00 UTC+4 = 00:00 UTC = 16:00 PST (previous day).
+  So for "04:00 Dubai tomorrow" from PST perspective = 16:00 PST today.
+
+  To install (DO NOT run until memory is seeded):
+    cp scripts/com.ikaros.right-hand.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+
+  To test manually:
+    launchctl start com.ikaros.right-hand
+
+  To uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+    rm ~/Library/LaunchAgents/com.ikaros.right-hand.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ikaros.right-hand</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/bigmac/projects/apps/ikrs-workspace/scripts/right-hand-runner.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bigmac/.ikrs-workspace/vaults/blr-world-com</string>
+
+  <!-- 16:00 PST = 04:00 Dubai (UTC+4). Adjust if Mac timezone changes. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>16</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- One-shot per fire. Don't keep alive, don't run on load. -->
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+
+  <!-- Logs — date-stamped by the wrapper script -->
+  <key>StandardOutPath</key>
+  <string>/Users/bigmac/Library/Logs/ikaros-right-hand/launchd-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bigmac/Library/Logs/ikaros-right-hand/launchd-stderr.log</string>
+
+  <!-- Allow the session to run for up to 30 minutes before launchd kills it -->
+  <key>TimeoutSeconds</key>
+  <integer>1800</integer>
+</dict>
+</plist>
