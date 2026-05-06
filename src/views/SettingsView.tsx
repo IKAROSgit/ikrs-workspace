@@ -24,13 +24,16 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { syncTokenToFirestore } from "@/lib/firestore-tokens";
 import type { SkillUpdateParams } from "@/types/skills";
 
-// Keep in sync with ChatView.tsx GOOGLE_SCOPES. 2026-04-20:
-// drive.file bumped to drive.readonly so the Files view surfaces
-// consultants' existing Drive content.
+// Keep in sync with ChatView.tsx GOOGLE_SCOPES.
+// 2026-04-20: drive.file → drive.readonly for Files view.
+// 2026-05-06: added Chat scopes for Phase H daily study surface.
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/chat.spaces.readonly",
+  "https://www.googleapis.com/auth/chat.messages.readonly",
+  "https://www.googleapis.com/auth/chat.memberships.readonly",
 ];
 
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";

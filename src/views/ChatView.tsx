@@ -18,16 +18,16 @@ import { syncTokenToFirestore } from "@/lib/firestore-tokens";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-// Google OAuth scopes. 2026-04-20: drive.file → drive.readonly so
-// the Files view surfaces the consultant's existing Drive content
-// (drive.file only exposes files the app itself created, which would
-// make the view look empty on day 0). Still read-only; Claude's
-// in-chat tools that need write access use the drive MCP which has
-// its own auth.
+// Google OAuth scopes. Keep in sync with SettingsView.tsx.
+// 2026-04-20: drive.file → drive.readonly for Files view.
+// 2026-05-06: added Chat scopes for Phase H daily study surface.
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/chat.spaces.readonly",
+  "https://www.googleapis.com/auth/chat.messages.readonly",
+  "https://www.googleapis.com/auth/chat.memberships.readonly",
 ];
 const OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET ?? "";
