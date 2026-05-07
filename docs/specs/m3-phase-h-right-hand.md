@@ -252,6 +252,7 @@ Challenge found 2 showstoppers + 4 blocks + 2 warns. All addressed:
 | 6 | BLOCK | No post-write validation of YAML frontmatter | **Fixed in prompt.** Post-write read-back validation: check `---` delimiters, required keys. On failure, revert to `.tmp` backup, log warning. |
 | 7 | WARN | Distiller and Phase H write to disjoint paths; assumption undocumented | Documented in spec §10 as architectural constraint. |
 | 8 | WARN | Calendar + Chat MCP not available in current session config | Phase 2 now has explicit "if MCP tool not available, skip surface with audit log" guard. Calendar and Chat degradation is acceptable for v1. |
+| 9 | BLOCK (post-deploy) | Memory location ambiguity: seeded files in project repo, wrapper cd's to vault — daily prompt never read seeded files | Discovered during first autonomous run. Fixed: vault is canonical for per-engagement memory (§12). Project repo holds scaffolding only. Merge completed in Phase H close-out Task 1. |
 
 ## 10. Open questions / future hardening
 
