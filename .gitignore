@@ -50,3 +50,5 @@ heartbeat/dist/
 # in production; locally they live alongside the example.
 heartbeat/config/secrets.env
 heartbeat/config/heartbeat.toml
+heartbeat/token.json
+heartbeat/token.json
