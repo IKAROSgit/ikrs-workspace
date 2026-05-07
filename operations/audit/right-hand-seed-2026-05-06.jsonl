@@ -1,0 +1,31 @@
+{"ts":"2026-05-06T21:30:00+04:00","action":"create","target":"memory/people/angelique.md","reason":"H.1 seeding — CPO at BLR WORLD, primary client contact"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/aaron.md","reason":"H.1 seeding — objectives, AppSheet, IT provider"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/sanad.md","reason":"H.1 seeding — platform walkthrough, JDs, timesheets"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/karla.md","reason":"H.1 seeding — SOL/ASMD/HI timelines"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/abed.md","reason":"H.1 seeding — finance user testing"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/muhammad.md","reason":"H.1 seeding — finance + HR policies"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/andy.md","reason":"H.1 seeding — PE rating"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/inayat.md","reason":"H.1 seeding — TNA task delegate"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/gabi.md","reason":"H.1 seeding — probation process fix"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/naz.md","reason":"H.1 seeding — HR policies reviewer"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/saad.md","reason":"H.1 seeding — HR policies with Muhammad/Naz"}
+{"ts":"2026-05-06T21:32:00+04:00","action":"create","target":"memory/people/rania-moussa.md","reason":"H.1 seeding — objectives control sheet contributor"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/appsheet-hris.md","reason":"H.1 seeding — HRIS platform, ~15 tasks, approaching go-live"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/objectives-workshops.md","reason":"H.1 seeding — OKR workshops, partially complete"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/hr-policies.md","reason":"H.1 seeding — HR policies update with Muhammad/Naz/Saad"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/finance-policies.md","reason":"H.1 seeding — finance policies, awaiting client"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/it-provider-eval.md","reason":"H.1 seeding — IT provider evaluation with Aaron"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/ai-workshop.md","reason":"H.1 seeding — Gemini AI workshop for BLR"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/actvet-proposal.md","reason":"H.1 seeding — ACTVET proposal drafting"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/enbd-pearl-museum.md","reason":"H.1 seeding — ENBD Pearl Museum clarifications"}
+{"ts":"2026-05-06T21:40:00+04:00","action":"create","target":"memory/projects/retainer-extension.md","reason":"H.1 seeding — retainer extension proposal, backlog"}
+{"ts":"2026-05-06T21:48:00+04:00","action":"create","target":"memory/loops/moe-owes.md","reason":"H.1 seeding — 9 items where others wait on Moe"}
+{"ts":"2026-05-06T21:48:00+04:00","action":"create","target":"memory/loops/waiting-on-others.md","reason":"H.1 seeding — 8 items where Moe is blocked"}
+{"ts":"2026-05-06T21:48:00+04:00","action":"create","target":"memory/loops/stale.md","reason":"H.1 seeding — 3 stale loops flagged for review"}
+{"ts":"2026-05-06T21:55:00+04:00","action":"create","target":"memory/patterns/work-style.md","reason":"H.1 seeding — multi-stream operator, delegation, tool preferences"}
+{"ts":"2026-05-06T21:55:00+04:00","action":"create","target":"memory/patterns/engagement-rhythm.md","reason":"H.1 seeding — BLR cadence, workshop/proposal patterns, heartbeat obs"}
+{"ts":"2026-05-06T22:05:00+04:00","action":"create","target":"memory/decisions/2026-04-phase-f-token-sync.md","reason":"H.1 seeding — AES-256-GCM over Cloud KMS"}
+{"ts":"2026-05-06T22:05:00+04:00","action":"create","target":"memory/decisions/2026-05-phase-g-queue-architecture.md","reason":"H.1 seeding — queue-based single-writer for bot poller"}
+{"ts":"2026-05-06T22:05:00+04:00","action":"create","target":"memory/decisions/2026-05-phase-h-launchd-not-mcp.md","reason":"H.1 seeding — launchd over scheduled-tasks MCP"}
+{"ts":"2026-05-06T22:05:00+04:00","action":"create","target":"memory/decisions/2026-05-gemini-flash-default.md","reason":"H.1 seeding — Flash over Pro for heartbeat cost"}
+{"ts":"2026-05-06T22:06:00+04:00","action":"session_complete","target":"operations/audit/right-hand-seed-2026-05-06.jsonl","reason":"H.1 seeding session complete — 5 sections populated"}
