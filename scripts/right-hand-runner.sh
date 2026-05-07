@@ -45,19 +45,20 @@ echo "[right-hand] prompt: $PROMPT_FILE"
 
 cd "$VAULT_ROOT"
 
-# Pass prompt via stdin — avoids word-splitting on YAML frontmatter
-# delimiters (---) which claude CLI misparses as flags.
+# Pass prompt via command substitution (quoted to prevent word-splitting).
 # --allowedTools: filesystem + MCP tools only, no Bash.
-"$CLAUDE_BIN" \
-  -p \
+# Disable set -e around the claude call — non-zero exit (e.g., MCP
+# graceful-degradation warnings) should not abort the wrapper before
+# the post-run logging below.
+set +e
+"$CLAUDE_BIN" -p "$(cat "$PROMPT_FILE")" \
   --allowedTools "Read,Write,Edit,Glob,Grep,mcp__*" \
   --output-format text \
   --max-turns 50 \
-  < "$PROMPT_FILE" \
   2>>"$LOG_DIR/stderr-$DATE.log" \
   >>"$LOG_DIR/stdout-$DATE.log"
-
 EXIT_CODE=$?
+set -e
 
 echo "[right-hand] session complete at $(date -u +%Y-%m-%dT%H:%M:%SZ) — exit code $EXIT_CODE"
 
