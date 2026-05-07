@@ -277,6 +277,25 @@ Challenge found 2 showstoppers + 4 blocks + 2 warns. All addressed:
    (memory refresh) will consume increasing tokens. Consider a monthly
    compaction pass that archives old entries.
 
+## 12. Path conventions
+
+Discovered during first autonomous run (2026-05-06): the wrapper's
+`cd $VAULT_ROOT` means all relative paths in the daily prompt resolve
+against the vault, not the project repo.
+
+| Location | Contains | Owner |
+|---|---|---|
+| `PROJECT_ROOT` (`~/projects/apps/ikrs-workspace/`) | Code, scaffolding, templates, prompt template, wrapper script, plist, specs | Git-tracked |
+| `VAULT_ROOT` (`~/.ikrs-workspace/vaults/<slug>/`) | Per-engagement memory, briefs, audit log, drafts, checkpoint | Not git-tracked (engagement-specific data) |
+
+**Consequence:** The daily prompt's paths like `operations/memory/people/`
+resolve to `<VAULT_ROOT>/operations/memory/people/`. The project repo
+holds only README.md scaffolding files as documentation of the expected
+structure.
+
+**Decision reference:** `decisions/2026-05-06-vault-canonical-memory.md`
+in the vault's memory directory.
+
 ## 11. Operations
 
 ### launchd plist
