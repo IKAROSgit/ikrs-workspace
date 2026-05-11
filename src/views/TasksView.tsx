@@ -244,8 +244,8 @@ export default function TasksView() {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="flex-1 overflow-auto p-3">
-          <div className="flex gap-3 min-w-max h-full">
+        <div className="flex-1 overflow-x-auto overflow-y-hidden p-3 min-h-0">
+          <div className="flex gap-3 h-full">
             {KANBAN_COLUMNS.map((col) => (
               <KanbanColumn
                 key={col.status}

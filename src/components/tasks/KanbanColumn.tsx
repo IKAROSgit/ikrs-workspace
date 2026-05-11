@@ -43,8 +43,8 @@ export function KanbanColumn({
   return (
     <div
       className={cn(
-        "flex flex-col min-w-[200px] flex-1 rounded-lg border border-border bg-muted/20",
-        "max-h-full",
+        "flex flex-col w-[300px] shrink-0 rounded-lg border border-border bg-muted/20",
+        "h-full max-h-full",
       )}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border sticky top-0 bg-muted/30 backdrop-blur-sm rounded-t-lg">
