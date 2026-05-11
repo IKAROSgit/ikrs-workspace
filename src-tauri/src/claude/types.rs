@@ -170,6 +170,16 @@ pub struct McpAuthErrorPayload {
     pub error_hint: String,
 }
 
+/// Emitted when the Claude CLI's underlying Anthropic API call returns
+/// 401/403. Distinct from `McpAuthErrorPayload` because the remediation
+/// is `claude auth login` (re-auth the CLI), not the per-engagement
+/// Google OAuth flow.
+#[derive(Debug, Clone, Serialize)]
+pub struct CliAuthRequiredPayload {
+    pub status: i64,
+    pub message: String,
+}
+
 /// Ground-truth result of stat'ing a file path that Claude just
 /// claimed to have Written / Edited / NotebookEdited. Emitted as
 /// `claude:write-verified` regardless of what Claude's tool_result

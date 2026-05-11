@@ -16,6 +16,7 @@ interface ClaudeState {
   totalCostUsd: number;
   error: string | null;
   authError: { server: string; hint: string } | null;
+  cliAuthError: { status: number; message: string } | null;
   availableTools: string[];
   model: string | null;
   sessionStartedAt: number | null;
@@ -37,6 +38,8 @@ interface ClaudeState {
   setError: (message: string) => void;
   setAuthError: (server: string, hint: string) => void;
   clearAuthError: () => void;
+  setCliAuthError: (status: number, message: string) => void;
+  clearCliAuthError: () => void;
   setDisconnected: (reason: string) => void;
   saveAndClearHistory: (engagementId: string) => void;
   loadHistory: (engagementId: string) => void;
@@ -51,6 +54,7 @@ const initialState = {
   totalCostUsd: 0,
   error: null as string | null,
   authError: null as { server: string; hint: string } | null,
+  cliAuthError: null as { status: number; message: string } | null,
   availableTools: [] as string[],
   model: null as string | null,
   sessionStartedAt: null as number | null,
@@ -69,6 +73,7 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
       availableTools: tools,
       model,
       error: null,
+      cliAuthError: null,
       sessionStartedAt: Date.now(),
     }),
 
@@ -186,6 +191,18 @@ export const useClaudeStore = create<ClaudeState>()((set) => ({
 
   clearAuthError: () =>
     set({ authError: null }),
+
+  setCliAuthError: (status, message) =>
+    set({
+      cliAuthError: { status, message },
+      // The session has effectively died — surface that explicitly so
+      // the input bar disables and the user can't keep typing into the
+      // void.
+      status: "error",
+    }),
+
+  clearCliAuthError: () =>
+    set({ cliAuthError: null }),
 
   setDisconnected: (reason) =>
     set({

@@ -12,6 +12,7 @@ import type {
   ErrorPayload,
   SessionEndPayload,
   McpAuthErrorPayload,
+  CliAuthRequiredPayload,
   WriteVerificationPayload,
 } from "@/types/claude";
 
@@ -169,6 +170,15 @@ function registerListeners(): void {
       store().setAuthError(
         event.payload.server_name,
         event.payload.error_hint
+      );
+    })
+  );
+
+  register(() =>
+    listen<CliAuthRequiredPayload>("claude:cli-auth-required", (event) => {
+      store().setCliAuthError(
+        event.payload.status,
+        event.payload.message,
       );
     })
   );

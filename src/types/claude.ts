@@ -84,6 +84,15 @@ export interface McpAuthErrorPayload {
   error_hint: string;
 }
 
+// Emitted when the Claude CLI subprocess fails its own Anthropic API
+// auth (typically HTTP 401 from /v1/messages). Distinct from
+// McpAuthErrorPayload: remediation is `claude auth login`, not the
+// per-engagement Google OAuth flow.
+export interface CliAuthRequiredPayload {
+  status: number;
+  message: string;
+}
+
 // Emitted after every Write / Edit / NotebookEdit tool-result. The
 // Rust side stats the target file and reports ground-truth state
 // alongside what Claude claimed. `verified=false` when

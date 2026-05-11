@@ -13,7 +13,7 @@ import { useEngagementStore } from "@/stores/engagementStore";
 import { useWorkspaceSession } from "@/hooks/useWorkspaceSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { OfflineBanner } from "@/components/OfflineBanner";
-import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession, getCredential, makeKeychainKey } from "@/lib/tauri-commands";
+import { sendClaudeMessage, startOAuthFlow, cancelOAuthFlow, killClaudeSession, getCredential, makeKeychainKey, claudeAuthLogin } from "@/lib/tauri-commands";
 import { syncTokenToFirestore } from "@/lib/firestore-tokens";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -51,11 +51,14 @@ export default function ChatView() {
 
   const authError = useClaudeStore((s) => s.authError);
   const clearAuthError = useClaudeStore((s) => s.clearAuthError);
+  const cliAuthError = useClaudeStore((s) => s.cliAuthError);
+  const clearCliAuthError = useClaudeStore((s) => s.clearCliAuthError);
 
   const { connect: handleConnect, switching } = useWorkspaceSession();
   const isOnline = useOnlineStatus();
 
   const [reauthing, setReauthing] = useState(false);
+  const [cliReauthing, setCliReauthing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to Tauri events
@@ -137,6 +140,30 @@ export default function ChatView() {
     }
   }, [reauthing, clearAuthError, handleConnect, activeEngagementId]);
 
+  // Anthropic API 401: the Claude CLI's own session token is stale.
+  // `claude auth login` opens a browser flow that refreshes the
+  // credential in the OS keychain — separate from the per-engagement
+  // Google OAuth that handleReauth handles.
+  const handleCliReauth = useCallback(async () => {
+    if (cliReauthing) return;
+    setCliReauthing(true);
+    try {
+      // Kill any zombie session first so the post-auth reconnect spawns
+      // a clean subprocess that picks up the refreshed credential.
+      const sid = useClaudeStore.getState().sessionId;
+      if (sid) await killClaudeSession(sid);
+      await claudeAuthLogin();
+      clearCliAuthError();
+      await handleConnect();
+    } catch (e) {
+      useClaudeStore.getState().setError(
+        `Claude CLI re-auth failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setCliReauthing(false);
+    }
+  }, [cliReauthing, clearCliAuthError, handleConnect]);
+
   // No engagement selected
   if (!activeEngagementId) {
     return (
@@ -179,7 +206,19 @@ export default function ChatView() {
     <div className="flex flex-col h-full">
       <OfflineBanner feature="Claude" />
       <SessionIndicator status={status} model={model} costUsd={totalCostUsd} switching={switching} />
-      {sessionDropped && (
+      {cliAuthError && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-red-500/15 border-b border-red-500/30 text-red-600 dark:text-red-400 text-sm">
+          <Bot size={14} className="flex-shrink-0" />
+          <span className="flex-1">
+            Claude CLI authentication expired (HTTP {cliAuthError.status}).
+            Sign back into Claude to restore your chat session.
+          </span>
+          <Button size="sm" onClick={handleCliReauth} disabled={cliReauthing}>
+            {cliReauthing ? "Opening browser…" : "Sign into Claude"}
+          </Button>
+        </div>
+      )}
+      {sessionDropped && !cliAuthError && (
         <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-sm">
           <Bot size={14} className="flex-shrink-0" />
           <span className="flex-1">

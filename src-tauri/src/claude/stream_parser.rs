@@ -573,6 +573,26 @@ fn handle_result_event(raw: &serde_json::Value, app: &AppHandle) {
     let is_error = raw["is_error"].as_bool().unwrap_or(false);
 
     if is_error || subtype == "error" {
+        // Anthropic API 401/403 means the Claude CLI itself is not
+        // authenticated (or the session token expired). The generic
+        // error banner offers "Reconnect" which just spawns another
+        // unauthenticated subprocess — useless. Emit a distinct event
+        // that the frontend can render with a "Sign into Claude CLI"
+        // action instead. See ChatView's cliAuthError banner.
+        let api_status = raw["api_error_status"].as_i64();
+        if api_status == Some(401) || api_status == Some(403) {
+            let _ = app.emit(
+                "claude:cli-auth-required",
+                CliAuthRequiredPayload {
+                    status: api_status.unwrap_or(401),
+                    message: raw["result"]
+                        .as_str()
+                        .unwrap_or("Claude CLI authentication failed")
+                        .to_string(),
+                },
+            );
+            return;
+        }
         let _ = app.emit(
             "claude:error",
             ErrorPayload {
