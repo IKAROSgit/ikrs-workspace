@@ -45,14 +45,22 @@ prompt_version = "tick_prompt.v1"
 # "claude"     (deferred to first commercial tenant)
 provider = "openrouter"
 # OpenRouter routes through whichever upstream offers the best
-# performance/cost. Default mirrors the OpenClaw agents (Elara,
-# Athena, etc.) so the heartbeat shares the same spend cap +
-# rotation point. The "openrouter/" prefix is accepted for parity
+# performance/cost. The "openrouter/" prefix is accepted for parity
 # with openclaw.json but stripped on the wire.
-model = "moonshotai/kimi-k2-0905"
-# Alternatives the OpenClaw stack already uses:
-# model = "deepseek/deepseek-chat-v3.1"
-# model = "deepseek/deepseek-r1-0528"
+#
+# Free-tier default (no OpenRouter credits required, $0/month):
+model = "z-ai/glm-4.5-air:free"
+#
+# Paid alternatives (mirror the OpenClaw agents — require purchased
+# credits at openrouter.ai/settings/credits, ~$1-2/month at heartbeat
+# scale):
+# model = "moonshotai/kimi-k2-0905"     # Elara/Athena's primary, 262k ctx
+# model = "deepseek/deepseek-chat-v3.1" # cheaper, used by Donna/Specter
+# model = "deepseek/deepseek-r1-0528"   # reasoning model, expensive
+#
+# Other working free models (tested 2026-05-11):
+# model = "openai/gpt-oss-120b:free"   # heavy reasoner, may exhaust max_tokens
+#
 # For provider = "gemini":
 # model = "gemini-2.5-flash"
 temperature = 0.2

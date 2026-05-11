@@ -185,7 +185,9 @@ vault_root = "$VAULT_ROOT"
 
 [llm]
 provider = "openrouter"
-model = "moonshotai/kimi-k2-0905"
+# Free default — switch to "moonshotai/kimi-k2-0905" or similar paid
+# model once the OpenRouter account has purchased credits.
+model = "z-ai/glm-4.5-air:free"
 temperature = 0.2
 max_output_tokens = 4096
 

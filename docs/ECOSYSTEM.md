@@ -654,13 +654,24 @@ any drift. This keeps the adapter model-agnostic so we can route
 through Kimi, DeepSeek, future Claude/GPT/etc. without re-tuning
 the response shape.
 
-**Model selection (matches OpenClaw defaults).**
-- Default: `moonshotai/kimi-k2-0905` — 262k context, 8192 max
-  output, Elara/Athena's primary model.
-- Alternative: `deepseek/deepseek-chat-v3.1` — cheaper, used by
-  Donna/Specter for higher-volume agents.
-- Alternative: `deepseek/deepseek-r1-0528` — reasoning model;
-  expensive, reserved for hardest Hermes/Atlas paths.
+**Model selection.**
+- Current default: `z-ai/glm-4.5-air:free` — chosen 2026-05-11
+  after the OpenRouter account (shared with OpenClaw) was found
+  to have zero purchased credits (HTTP 402 on Kimi K2). GLM-4.5-Air
+  is a free-tier reasoning model that emits clean JSON for the
+  Tier II schema; tested at ~6400 tokens/tick on the real BLR-WORLD
+  vault, ~3.5min duration. Sufficient for hourly cadence.
+- Paid alternative (requires `openrouter.ai/settings/credits`
+  deposit, ~$1-2/month at heartbeat scale):
+  `moonshotai/kimi-k2-0905` — 262k context, 8192 max output, the
+  model OpenClaw's openclaw.json points at. Switch via
+  `sudo nano /etc/ikrs-heartbeat/heartbeat.toml; systemctl restart`.
+- Other tested free models: `openai/gpt-oss-120b:free` works for
+  small prompts but exhausts max_output_tokens on full heartbeat
+  prompts (heavy reasoning overhead).
+- Other paid options OpenClaw uses: `deepseek/deepseek-chat-v3.1`
+  (cheaper, Donna/Specter), `deepseek/deepseek-r1-0528` (reasoning,
+  Hermes/Atlas).
 
 The adapter accepts both `moonshotai/kimi-k2-0905` and the
 OpenClaw-style `openrouter/moonshotai/kimi-k2-0905` (the
@@ -694,13 +705,16 @@ All of these are caught by the tick orchestrator's
 `except LlmError` and recorded on `heartbeat_health.errorCode` —
 they never crash the service.
 
-**Cost posture.** Kimi K2 at OpenRouter (2026-05) is roughly
-$0.60/M input + $2.50/M output. A steady-state tick consumes
-~3000 tokens (mostly input). One operator's hourly heartbeat
-= ~720 ticks/month ≈ 2.16M tokens, dominated by input
-(~$1.30/month). DeepSeek V3.1 is cheaper still (~$0.27/M
-input). The spend cap on the OpenRouter dashboard catches
-runaway loops before they matter.
+**Cost posture.** Today's deployed model
+(`z-ai/glm-4.5-air:free`) is $0 — OpenRouter's free tier is
+rate-limited but fits comfortably under the hourly cadence.
+Kimi K2 at OpenRouter (2026-05) is roughly $0.60/M input +
+$2.50/M output. A steady-state tick consumes ~3000-6500 tokens
+(mostly input). One operator's hourly heartbeat = ~720 ticks/
+month ≈ 2.16M tokens, dominated by input (~$1.30/month if on
+Kimi K2 paid). DeepSeek V3.1 is cheaper still (~$0.27/M input).
+The spend cap on the OpenRouter dashboard catches runaway loops
+before they matter.
 
 **What this integration does NOT do**:
 - No streaming. The tick is one synchronous request/response.
