@@ -157,9 +157,10 @@ def load_config(path: Path) -> HeartbeatConfig:
         temperature=float(llm_raw.get("temperature", 0.2)),
         max_output_tokens=int(llm_raw.get("max_output_tokens", 4096)),
     )
-    if llm.provider not in {"gemini", "claude"}:
+    if llm.provider not in {"gemini", "openrouter", "claude"}:
         raise ValueError(
-            f"llm.provider must be 'gemini' or 'claude', got {llm.provider!r}"
+            "llm.provider must be 'gemini', 'openrouter', or 'claude', "
+            f"got {llm.provider!r}"
         )
 
     signals_raw = raw.get("signals", {}) or {}

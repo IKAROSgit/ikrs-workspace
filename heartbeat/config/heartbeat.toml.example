@@ -40,11 +40,21 @@ prompt_version = "tick_prompt.v1"
 # audit_log_path = "/var/log/ikrs-heartbeat.jsonl"
 
 [llm]
-provider = "gemini"           # "gemini" (Tier II default) | "claude" (deferred to commercial)
-# Default to Flash. Pro is 8-15x more expensive per token at heartbeat
-# scale (~720 ticks/month); only switch to Pro if you measurably need
-# Pro-tier reasoning quality for your engagement's domain.
-model = "gemini-2.5-flash"
+# "openrouter" (Tier II default — shared gateway with OpenClaw agents)
+# "gemini"     (direct google-genai SDK — requires Gemini API enabled on the GCP project tied to the key)
+# "claude"     (deferred to first commercial tenant)
+provider = "openrouter"
+# OpenRouter routes through whichever upstream offers the best
+# performance/cost. Default mirrors the OpenClaw agents (Elara,
+# Athena, etc.) so the heartbeat shares the same spend cap +
+# rotation point. The "openrouter/" prefix is accepted for parity
+# with openclaw.json but stripped on the wire.
+model = "moonshotai/kimi-k2-0905"
+# Alternatives the OpenClaw stack already uses:
+# model = "deepseek/deepseek-chat-v3.1"
+# model = "deepseek/deepseek-r1-0528"
+# For provider = "gemini":
+# model = "gemini-2.5-flash"
 temperature = 0.2
 max_output_tokens = 4096
 

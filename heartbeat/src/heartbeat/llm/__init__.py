@@ -8,7 +8,9 @@ Public surface (E.2):
   ``config.llm.provider``.
 
 Adapters live in submodules:
-- ``heartbeat.llm.gemini`` — Tier II default (E.2).
+- ``heartbeat.llm.gemini`` — direct google-genai SDK (E.2).
+- ``heartbeat.llm.openrouter`` — gateway shared with the OpenClaw VM
+  agents (Elara, Athena, Helios, …); single key + spend cap.
 - ``heartbeat.llm.claude`` — deferred until first commercial tenant brings
   their own ``ANTHROPIC_API_KEY``.
 """

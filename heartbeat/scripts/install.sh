@@ -11,8 +11,11 @@
 #   2. Creates a Python 3.11+ virtualenv at /opt/ikrs-heartbeat/venv.
 #   3. Installs the heartbeat package (this checked-out tree by default;
 #      override with HEARTBEAT_SOURCE=/path/to/wheel).
-#   4. Captures missing secrets interactively (Gemini, Firebase SA path,
+#   4. Captures missing secrets interactively (OpenRouter, Firebase SA path,
 #      Telegram bot token + chat_id) — preserves existing values.
+#      A direct Gemini key (GEMINI_API_KEY) is captured if present in the
+#      environment but the default provider is now OpenRouter (shared with
+#      the OpenClaw VM agents).
 #   5. Runs Telegram deleteWebhook so getUpdates works for the operator's
 #      bot (handles the case where the token was previously webhooked).
 #   6. Installs systemd unit + timer, enables them.
@@ -24,7 +27,8 @@
 # Env overrides (any of these, all optional):
 #   HEARTBEAT_SOURCE     — path to heartbeat/ checkout or wheel.
 #                          Default: directory of this script's parent.
-#   GEMINI_API_KEY       — pre-seed instead of prompting.
+#   OPENROUTER_API_KEY   — pre-seed instead of prompting (recommended).
+#   GEMINI_API_KEY       — only needed if provider="gemini" in heartbeat.toml.
 #   TELEGRAM_BOT_TOKEN   — same.
 #   TELEGRAM_CHAT_ID     — same.
 #   FIREBASE_SA_KEY_PATH — must already exist on disk (we copy it into
@@ -180,8 +184,8 @@ id = "$ENGAGEMENT_ID"
 vault_root = "$VAULT_ROOT"
 
 [llm]
-provider = "gemini"
-model = "gemini-2.5-pro"
+provider = "openrouter"
+model = "moonshotai/kimi-k2-0905"
 temperature = 0.2
 max_output_tokens = 4096
 
@@ -211,7 +215,21 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
   install -m 0600 -o "$IKRS_USER" -g "$IKRS_USER" /dev/null "$SECRETS_FILE"
 fi
 
-read_secret_if_missing GEMINI_API_KEY "Gemini API key (AI Studio)" "$SECRETS_FILE"
+# Read the LLM provider out of heartbeat.toml so we only prompt for the
+# key the operator actually needs. Operators with both providers
+# configured (e.g. failover) can pre-seed both via env.
+LLM_PROVIDER="$(grep -E '^provider\s*=' "$ETC_DIR/heartbeat.toml" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/')"
+LLM_PROVIDER="${LLM_PROVIDER:-openrouter}"
+say "configured LLM provider: $LLM_PROVIDER"
+
+if [[ "$LLM_PROVIDER" == "openrouter" ]]; then
+  read_secret_if_missing OPENROUTER_API_KEY "OpenRouter API key (sk-or-v1-…, mirror ~/.openclaw/.env.providers)" "$SECRETS_FILE"
+else
+  # Gemini direct (or any future provider). Capture the Gemini key so
+  # toggling provider="gemini" in heartbeat.toml later does not need
+  # a re-run of install.sh.
+  read_secret_if_missing GEMINI_API_KEY "Gemini API key (AI Studio)" "$SECRETS_FILE"
+fi
 read_secret_if_missing TELEGRAM_BOT_TOKEN "Telegram bot token (BotFather)" "$SECRETS_FILE"
 read_secret_if_missing TELEGRAM_CHAT_ID "Telegram chat ID (after messaging the bot once)" "$SECRETS_FILE"
 
@@ -276,8 +294,11 @@ else
 fi
 
 # Now write secrets.env (idempotent rewrite — preserves prior values).
+# Both LLM keys are written if previously set so toggling provider in
+# heartbeat.toml doesn't require another install run.
 cat > "$SECRETS_FILE" <<EOF
-GEMINI_API_KEY="$GEMINI_API_KEY"
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
 FIREBASE_SA_KEY_PATH="$ETC_DIR/firebase-sa.json"

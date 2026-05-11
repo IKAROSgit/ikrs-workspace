@@ -8,7 +8,7 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: 2026-04-28 (Phase F.2 token sync, all sections reviewed).
+Last verified: 2026-05-11 (Phase I.0 hardening + OpenRouter heartbeat switch).
 See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
 file in this list pre-dates an architecture-touching commit elsewhere,
 this doc is stale and trusting it is unsafe.
@@ -44,7 +44,8 @@ table (preserve history) and remove the section.
 | Gmail API (read-only) | Tier II email collector | §5.1 | ✅ |
 | Google Calendar API (read-only) | Tier II calendar collector | §5.1 | ✅ |
 | Google OAuth (installed-app flow) | Per-engagement Gmail/Calendar auth | §3.1, §5.1 | ✅ (single-token in v1; Phase F multi-token) |
-| Gemini 2.5 Pro (`google-genai` SDK) | Tier II LLM | §5.1 | ✅ |
+| Gemini 2.5 Pro (`google-genai` SDK) | Tier II LLM (direct, fallback path) | §5.1 | ✅ |
+| OpenRouter (Kimi K2 / DeepSeek via `requests`) | Tier II LLM (default, shared key with OpenClaw VM agents) | §5.5 | ✅ |
 | Telegram Bot API | Mobile push for urgent items | §5.3 | ✅ |
 | BotFather + per-operator bots | Telegram bot provisioning | §5.3 | ✅ |
 | Claude Code subprocess | In-app coding/chat sessions per engagement | §1, §3.1 | ⚠️ section thin — needs dedicated coverage |
@@ -277,10 +278,15 @@ firestore:rules` and `firestore:indexes`.
    `heartbeat/src/heartbeat/prompts/tick_prompt_v1.txt`. Threads
    `last_action_summaries` (natural-language one-liners, NOT opaque
    IDs) for dedupe context.
-4. Call LLM (`heartbeat.llm.gemini.GeminiClient`) with
-   `response_mime_type="application/json"` and
-   `response_json_schema=TICK_RESPONSE_SCHEMA`. Currently
-   `gemini-2.5-pro`. ~3000 tokens/tick (steady state).
+4. Call LLM via `heartbeat.llm.factory.make_llm_client(config.llm)`.
+   Default `provider="openrouter"`, model `moonshotai/kimi-k2-0905`
+   — see §5.5 for the dedicated section. Adapter passes the
+   `TICK_RESPONSE_SCHEMA` in a system message (json_object mode) and
+   the tick orchestrator parses + validates the returned JSON.
+   `provider="gemini"` is still wired up (`heartbeat.llm.gemini.GeminiClient`,
+   `response_mime_type="application/json"` + `response_json_schema`)
+   for installations that prefer the direct google-genai SDK. ~3000
+   tokens/tick (steady state).
 5. Parse JSON → typed actions (`KanbanTaskAction`,
    `MemoryUpdateAction`, `TelegramPushAction`). Re-key IDs to fresh
    UUIDs server-side. Stamp `emitted_at`.
@@ -506,7 +512,17 @@ sudo /opt/ikrs-heartbeat/venv/bin/pip install -e ~/projects/apps/ikrs-workspace/
 sudo systemctl restart ikrs-heartbeat.service
 ```
 
-**Rotate Gemini API key**:
+**Rotate OpenRouter API key** (default provider):
+```bash
+# On the VM:
+sudo nano /etc/ikrs-heartbeat/secrets.env  # update OPENROUTER_API_KEY
+sudo systemctl restart ikrs-heartbeat.service
+# The OpenClaw agents share the same key — rotate at openrouter.ai
+# once, update both /etc/ikrs-heartbeat/secrets.env and
+# ~/.openclaw/.env.providers.
+```
+
+**Rotate Gemini API key** (only if `[llm].provider = "gemini"`):
 ```bash
 # On the VM:
 sudo nano /etc/ikrs-heartbeat/secrets.env  # update GEMINI_API_KEY
@@ -603,6 +619,125 @@ sudo systemctl restart ikrs-heartbeat.service
 # After all engagements have ticked once, remove _PREV entries.
 # Update Mac .env.local: VITE_TOKEN_ENCRYPTION_KEY=<new key>
 ```
+
+### 5.5 OpenRouter integration
+
+**Why it exists.** OpenRouter is the LLM gateway the rest of the
+IKAROS VM stack already runs through — Elara, Athena, Helios, and
+the other OpenClaw agents share a single `OPENROUTER_API_KEY` with
+a spend cap. Until 2026-05-11 the heartbeat used the Gemini API
+directly, which forced us to maintain a second GCP project + key +
+rotation procedure and exposed an entire failure mode (the
+Gemini-API-disabled 403 storm that broke Tier II for 48 hours;
+see §7 limitation #14). Routing the heartbeat through the same
+gateway gives us one bill, one rotation point, the same
+spend-cap protection, and access to whatever upstream model
+performs best per-tick without changing infrastructure.
+
+**Architecture: OpenAI-compatible HTTP via `requests`.** OpenRouter
+exposes an OpenAI-shaped `/v1/chat/completions` endpoint that
+routes to many upstream models. We hit it directly with the
+`requests` library (already a heartbeat dep for the Telegram bot),
+avoiding the larger `openai` SDK. One adapter,
+`heartbeat.llm.openrouter.OpenRouterClient`, implements the
+`LlmClient` protocol the same way `GeminiClient` does — the tick
+orchestrator never knows which provider is configured.
+
+**JSON-mode strategy.** Strict `response_format: {type:
+"json_schema", json_schema: {...}}` is upstream-specific
+(Moonshot supports it, DeepSeek doesn't reliably). The adapter
+uses the looser `{type: "json_object"}` and injects
+`TICK_RESPONSE_SCHEMA` into a synthetic system message instead.
+The model still produces valid JSON conforming to the schema, and
+the tick orchestrator's existing `parse_actions` validator catches
+any drift. This keeps the adapter model-agnostic so we can route
+through Kimi, DeepSeek, future Claude/GPT/etc. without re-tuning
+the response shape.
+
+**Model selection (matches OpenClaw defaults).**
+- Default: `moonshotai/kimi-k2-0905` — 262k context, 8192 max
+  output, Elara/Athena's primary model.
+- Alternative: `deepseek/deepseek-chat-v3.1` — cheaper, used by
+  Donna/Specter for higher-volume agents.
+- Alternative: `deepseek/deepseek-r1-0528` — reasoning model;
+  expensive, reserved for hardest Hermes/Atlas paths.
+
+The adapter accepts both `moonshotai/kimi-k2-0905` and the
+OpenClaw-style `openrouter/moonshotai/kimi-k2-0905` (the
+`openrouter/` prefix is stripped before sending) so operators can
+copy/paste model IDs straight from `~/.openclaw/openclaw.json`.
+
+**Setup ritual** (mirrors the OpenClaw bootstrap operators already
+know):
+
+1. Operator already has `OPENROUTER_API_KEY` in
+   `~/.openclaw/.env.providers` (mode 0600). Same key is used
+   for the heartbeat — IKAROS treats it as one tenant.
+2. `install.sh` reads `[llm].provider` from `heartbeat.toml` and
+   prompts only for the relevant key (`OPENROUTER_API_KEY` for
+   the default provider).
+3. Key written to `/etc/ikrs-heartbeat/secrets.env` (mode 0600
+   `ikrs:ikrs`).
+4. `systemctl start ikrs-heartbeat.service` → first tick verifies
+   the gateway responds with a 200 + valid JSON body.
+
+**Error mapping** (HTTP → `LlmError.error_code`):
+- HTTP 401 → `invalid_api_key` (rotate or check spend cap).
+- HTTP 429 → `rate_limited` (another OpenClaw agent likely
+  hammered the same key; OpenRouter's per-key throttle fired).
+- HTTP 4xx/5xx (other) → `llm_call_failed` with up to 400 chars
+  of the response body (api keys never appear in body previews).
+- `requests.RequestException` → `network_error`.
+- Empty `choices` or `content` → `empty_response`.
+
+All of these are caught by the tick orchestrator's
+`except LlmError` and recorded on `heartbeat_health.errorCode` —
+they never crash the service.
+
+**Cost posture.** Kimi K2 at OpenRouter (2026-05) is roughly
+$0.60/M input + $2.50/M output. A steady-state tick consumes
+~3000 tokens (mostly input). One operator's hourly heartbeat
+= ~720 ticks/month ≈ 2.16M tokens, dominated by input
+(~$1.30/month). DeepSeek V3.1 is cheaper still (~$0.27/M
+input). The spend cap on the OpenRouter dashboard catches
+runaway loops before they matter.
+
+**What this integration does NOT do**:
+- No streaming. The tick is one synchronous request/response.
+- No tool calling. OpenRouter supports tool calls for upstreams
+  that do, but the heartbeat speaks via the JSON-action schema —
+  no need.
+- No fallback chain. If the primary model 5xx's, the tick records
+  the error and dispatches no actions. Adding a fallback (e.g.
+  Kimi → DeepSeek V3.1) is straightforward (config knob already
+  exists at adapter level) but the prompt has been calibrated for
+  Kimi and we don't want silent quality drift.
+- No model-specific prompt routing. One prompt, one schema,
+  whatever model OpenRouter resolves it to.
+
+**Operational notes**:
+- Key rotation: rotate at openrouter.ai, then update BOTH
+  `~/.openclaw/.env.providers` AND
+  `/etc/ikrs-heartbeat/secrets.env`. Restart `ikrs-heartbeat.service`
+  + relevant OpenClaw services so both see the new value.
+- Switching providers: edit `[llm].provider` in
+  `/etc/ikrs-heartbeat/heartbeat.toml` between `"openrouter"` and
+  `"gemini"`, then `systemctl restart`. No code change. Both
+  keys live in `secrets.env` so toggling is cheap.
+- Model swap: edit `[llm].model` (e.g.
+  `deepseek/deepseek-chat-v3.1` for a 10× cost cut at the price
+  of some reasoning quality). Restart. Telemetry's `model_used`
+  field echoes whatever upstream OpenRouter actually resolved.
+
+**Future work**:
+- Cost-aware routing: a tick that touches "high-stakes" actions
+  (telegram_push at urgency=urgent) could route to a stronger
+  upstream, and routine ticks could drop to a cheaper one.
+- Fallback chain on 5xx: try `kimi-k2 → deepseek-v3.1 →
+  gemini-2.5-flash` before declaring the tick failed.
+- Per-engagement model choice: when one client's domain benefits
+  from a specific model, override at the `[[engagements]]` level
+  rather than the global `[llm]` block.
 
 ## 6. Schema reference
 
@@ -723,6 +858,16 @@ disk so old `heartbeat_health.promptVersion` rows can be retraced.
     with new key, and update Firestore — but the manual procedure
     (let the heartbeat auto-re-encrypt on next tick) works for the
     current single-operator deployment.
+14. **Direct-Gemini path requires Gemini API enabled on the project tied
+    to the key.** Discovered 2026-05-09 during a 48-hour Tier II outage:
+    AI Studio keys are bound to a hidden GCP project, and if that project
+    doesn't have `generativelanguage.googleapis.com` enabled the heartbeat
+    gets `403 PERMISSION_DENIED` on every tick with no human-readable
+    surfacing beyond `error_code=llm_call_failed`. Fix is one of (a)
+    visit the activation URL the 403 body embeds, (b) rotate to a fresh
+    AI Studio key (auto-managed projects have it enabled), or (c) switch
+    to `provider="openrouter"` which the rest of the IKAROS stack
+    already uses. Default is now (c).
 
 ## 8. Update protocol — how to keep this doc honest
 

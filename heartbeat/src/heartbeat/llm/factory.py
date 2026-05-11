@@ -28,6 +28,12 @@ def make_llm_client(config: LlmConfig) -> LlmClient:
         from heartbeat.llm.gemini import GeminiClient
 
         return GeminiClient(config)
+    if provider == "openrouter":
+        # Local import keeps `requests` out of the cold path for callers
+        # that mock out the LLM entirely.
+        from heartbeat.llm.openrouter import OpenRouterClient
+
+        return OpenRouterClient(config)
     if provider == "claude":
         raise LlmError(
             "claude adapter is deferred until first commercial tenant "
