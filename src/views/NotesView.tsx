@@ -126,8 +126,8 @@ export default function NotesView() {
           </p>
         </div>
       ) : (
-        <div className="flex-1 flex overflow-hidden">
-          <ScrollArea className="flex-1 max-w-md border-r border-border">
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          <ScrollArea className="flex-1 max-w-md min-h-0 border-r border-border">
             {files.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <p className="text-sm">
@@ -169,7 +169,7 @@ export default function NotesView() {
               </div>
             )}
           </ScrollArea>
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {openRelPath ? (
               <>
                 <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
@@ -189,7 +189,7 @@ export default function NotesView() {
                     <X size={14} />
                   </Button>
                 </div>
-                <ScrollArea className="flex-1 p-4">
+                <ScrollArea className="flex-1 min-h-0 p-4">
                   {openLoading && (
                     <p className="text-sm text-muted-foreground">Loading…</p>
                   )}
