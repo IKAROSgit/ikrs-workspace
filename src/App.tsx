@@ -10,6 +10,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { useEngagementStore } from "@/stores/engagementStore";
 import { useMcpStore } from "@/stores/mcpStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useGoogleOAuthLinked } from "@/hooks/useGoogleOAuthLinked";
 import { CommandPalette } from "@/components/CommandPalette";
 
 function AppContent() {
@@ -23,6 +24,13 @@ function AppContent() {
   const isOnline = useOnlineStatus();
 
   const activeClient = clients.find((c) => c.id === activeEngagement?.clientId);
+  const googleLinked = useGoogleOAuthLinked(activeEngagement?.id ?? null);
+  const linkedLabel =
+    googleLinked && activeClient
+      ? `Google · ${activeClient.name}`
+      : googleLinked
+        ? "Google linked"
+        : undefined;
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
@@ -40,7 +48,7 @@ function AppContent() {
           </main>
         </div>
       </div>
-      <StatusBar connectedEmail={undefined} mcpStatuses={mcpServers} isOnline={isOnline} />
+      <StatusBar connectedEmail={linkedLabel} mcpStatuses={mcpServers} isOnline={isOnline} />
       <CommandPalette />
     </div>
   );

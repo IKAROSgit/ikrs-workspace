@@ -302,6 +302,22 @@ export default function SettingsView() {
             <p className="text-muted-foreground">
               Select an engagement first.
             </p>
+          ) : oauthStatus === "success" ? (
+            <>
+              <p className="text-green-500 text-sm">
+                Connected. The heartbeat and Mail/Calendar/Files views
+                will use this token for the active engagement.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleConnectGoogle}
+                disabled={!isOnline}
+                title={!isOnline ? "Reconnect requires internet." : undefined}
+              >
+                Reconnect Google Account
+              </Button>
+            </>
           ) : (
             <>
               <Button
@@ -313,11 +329,6 @@ export default function SettingsView() {
                   ? "Connecting..."
                   : "Connect Google Account"}
               </Button>
-              {oauthStatus === "success" && (
-                <p className="text-green-500 text-sm">
-                  Connected successfully.
-                </p>
-              )}
               {oauthStatus === "error" && (
                 <p className="text-red-500 text-sm">
                   Connection failed. Try again.
