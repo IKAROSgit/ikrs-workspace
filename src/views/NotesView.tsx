@@ -71,7 +71,7 @@ export default function NotesView() {
           work without an active Claude session. The old 'requires
           Claude session' banner was based on the MCP bridge that
           no longer gates this view. */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">
           Notes — {client?.name ?? "Unknown Client"}
         </h2>

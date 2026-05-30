@@ -54,7 +54,7 @@ export default function FilesView() {
   return (
     <div className="flex flex-col h-full">
       <OfflineBanner feature="Google Drive" />
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+      <div className="flex items-center gap-2 px-3 md:px-4 py-2 border-b border-border">
         <div className="relative flex-1">
           <Search
             className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
