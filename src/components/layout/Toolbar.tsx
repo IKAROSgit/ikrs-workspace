@@ -1,13 +1,21 @@
+import type { ReactNode } from "react";
 import { Search, Settings2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 interface ToolbarProps {
   engagementName: string;
+  /**
+   * Slot rendered at the leading edge of the toolbar. `App.tsx` injects
+   * the mobile hamburger (`MobileSidebar`) here when the viewport is
+   * below `md`; left undefined on desktop.
+   */
+  mobileSidebarSlot?: ReactNode;
 }
 
-export function Toolbar({ engagementName }: ToolbarProps) {
+export function Toolbar({ engagementName, mobileSidebarSlot }: ToolbarProps) {
   return (
     <header className="flex items-center h-12 px-4 border-b border-border bg-background gap-4">
+      {mobileSidebarSlot}
       <span className="font-semibold text-sm truncate">{engagementName}</span>
       <div className="flex-1 max-w-md">
         <div className="relative">
