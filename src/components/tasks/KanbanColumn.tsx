@@ -43,8 +43,12 @@ export function KanbanColumn({
   return (
     <div
       className={cn(
-        "flex flex-col w-[300px] shrink-0 rounded-lg border border-border bg-muted/20",
-        "h-full max-h-full",
+        // mobile (<md): columns stack vertically, each takes full width with
+        //               a bounded height so the page scrolls between them.
+        // md+        : original fixed-width column, fills the board height.
+        "flex flex-col rounded-lg border border-border bg-muted/20 shrink-0",
+        "w-full max-h-[60vh]",
+        "md:w-[300px] md:h-full md:max-h-full",
       )}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border sticky top-0 bg-muted/30 backdrop-blur-sm rounded-t-lg">

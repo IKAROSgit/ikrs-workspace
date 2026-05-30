@@ -244,8 +244,10 @@ export default function TasksView() {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="flex-1 overflow-x-auto overflow-y-hidden p-3 min-h-0">
-          <div className="flex gap-3 h-full">
+        {/* mobile (<md): vertical scroll, columns stacked.
+            md+        : horizontal scroll, columns side-by-side at fixed width. */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden md:overflow-y-hidden md:overflow-x-auto p-3 min-h-0">
+          <div className="flex flex-col md:flex-row gap-3 md:h-full">
             {KANBAN_COLUMNS.map((col) => (
               <KanbanColumn
                 key={col.status}
