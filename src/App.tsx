@@ -1,5 +1,5 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider, AuthGate } from "@/providers/AuthProvider";
+import { AuthProvider, AuthGate, useAuth } from "@/providers/AuthProvider";
 import { EngagementProvider } from "@/providers/EngagementProvider";
 import { SideRail } from "@/components/layout/SideRail";
 import { EngagementSwitcher } from "@/components/layout/EngagementSwitcher";
@@ -27,12 +27,7 @@ function AppContent() {
 
   const activeClient = clients.find((c) => c.id === activeEngagement?.clientId);
   const googleLinked = useGoogleOAuthLinked(activeEngagement?.id ?? null);
-  const linkedLabel =
-    googleLinked && activeClient
-      ? `Google · ${activeClient.name}`
-      : googleLinked
-        ? "Google linked"
-        : undefined;
+  const { consultant } = useAuth();
   const isMobile = useIsMobile();
 
   return (
@@ -64,7 +59,12 @@ function AppContent() {
           </main>
         </div>
       </div>
-      <StatusBar connectedEmail={linkedLabel} mcpStatuses={mcpServers} isOnline={isOnline} />
+      <StatusBar
+        connectedEmail={consultant?.email}
+        googleLinked={googleLinked}
+        mcpStatuses={mcpServers}
+        isOnline={isOnline}
+      />
       <CommandPalette />
     </div>
   );
