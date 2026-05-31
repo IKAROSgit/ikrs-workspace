@@ -8,7 +8,7 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: 2026-05-11 (Phase I.0 hardening + OpenRouter heartbeat switch).
+Last verified: 2026-05-31 (Phase I.1 UI hardening merged + architecture diagram landed).
 See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
 file in this list pre-dates an architecture-touching commit elsewhere,
 this doc is stale and trusting it is unsafe.
@@ -131,6 +131,10 @@ subscription, and the same code clone-and-go.
    │  Tier I reads + verifies)           │                        
    └─────────────────────────────────────┘                        
 ```
+
+A clickable component map (Mermaid) is at
+**[docs/architecture.md](./architecture.md)** — each node links to
+its source folder.
 
 Three layers:
 - **Tauri app** — operator's UI, OAuth, Claude session host, vault writer.
@@ -255,6 +259,8 @@ firestore:rules` and `firestore:indexes`.
 | M3 Phase 4 (timesheets) | Pending design | pending | |
 | **M3 Phase E** | **Autonomous heartbeat (dual-tier)** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-e-autonomous-heartbeat.md` |
 | **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **in progress — F.1 spec locked, F.2-F.8 to follow** | Spec: `docs/specs/m3-phase-f-token-sync.md`. Pre-code adversarial challenge passed (3 showstoppers fixed). Tauri writes AES-256-GCM encrypted tokens to `engagements/{eid}/google_tokens/{provider}`; heartbeat reads + decrypts per-engagement via Admin SDK. |
+| **M3 Phase I.0** | UI layout-system audit | shipped 2026-05-11 | `docs/ui-audit/2026-05-06-i0-baseline.md` — 7 views audited, 5 OK + 1 minor flag; baseline established. |
+| **M3 Phase I.1** | UI hardening (responsive + StatusBar polish) | shipped 2026-05-31 | PR #2. Closes the I.0 backlog: Tailwind `md`-based responsive system, hamburger drawer for `w-14` sidebar below `md`, kanban stacks vertically `<md`, SettingsView density + responsive padding, StatusBar shows consultant email + `· Google` indicator, per-view responsive header padding. Two adversarial-review rounds, vitest 104/105 (1 pre-existing failure on main). |
 
 ## 5. Heartbeat (Phase E) operational reference
 
@@ -654,24 +660,13 @@ any drift. This keeps the adapter model-agnostic so we can route
 through Kimi, DeepSeek, future Claude/GPT/etc. without re-tuning
 the response shape.
 
-**Model selection.**
-- Current default: `z-ai/glm-4.5-air:free` — chosen 2026-05-11
-  after the OpenRouter account (shared with OpenClaw) was found
-  to have zero purchased credits (HTTP 402 on Kimi K2). GLM-4.5-Air
-  is a free-tier reasoning model that emits clean JSON for the
-  Tier II schema; tested at ~6400 tokens/tick on the real BLR-WORLD
-  vault, ~3.5min duration. Sufficient for hourly cadence.
-- Paid alternative (requires `openrouter.ai/settings/credits`
-  deposit, ~$1-2/month at heartbeat scale):
-  `moonshotai/kimi-k2-0905` — 262k context, 8192 max output, the
-  model OpenClaw's openclaw.json points at. Switch via
-  `sudo nano /etc/ikrs-heartbeat/heartbeat.toml; systemctl restart`.
-- Other tested free models: `openai/gpt-oss-120b:free` works for
-  small prompts but exhausts max_output_tokens on full heartbeat
-  prompts (heavy reasoning overhead).
-- Other paid options OpenClaw uses: `deepseek/deepseek-chat-v3.1`
-  (cheaper, Donna/Specter), `deepseek/deepseek-r1-0528` (reasoning,
-  Hermes/Atlas).
+**Model selection (matches OpenClaw defaults).**
+- Default: `moonshotai/kimi-k2-0905` — 262k context, 8192 max
+  output, Elara/Athena's primary model.
+- Alternative: `deepseek/deepseek-chat-v3.1` — cheaper, used by
+  Donna/Specter for higher-volume agents.
+- Alternative: `deepseek/deepseek-r1-0528` — reasoning model;
+  expensive, reserved for hardest Hermes/Atlas paths.
 
 The adapter accepts both `moonshotai/kimi-k2-0905` and the
 OpenClaw-style `openrouter/moonshotai/kimi-k2-0905` (the
@@ -705,16 +700,13 @@ All of these are caught by the tick orchestrator's
 `except LlmError` and recorded on `heartbeat_health.errorCode` —
 they never crash the service.
 
-**Cost posture.** Today's deployed model
-(`z-ai/glm-4.5-air:free`) is $0 — OpenRouter's free tier is
-rate-limited but fits comfortably under the hourly cadence.
-Kimi K2 at OpenRouter (2026-05) is roughly $0.60/M input +
-$2.50/M output. A steady-state tick consumes ~3000-6500 tokens
-(mostly input). One operator's hourly heartbeat = ~720 ticks/
-month ≈ 2.16M tokens, dominated by input (~$1.30/month if on
-Kimi K2 paid). DeepSeek V3.1 is cheaper still (~$0.27/M input).
-The spend cap on the OpenRouter dashboard catches runaway loops
-before they matter.
+**Cost posture.** Kimi K2 at OpenRouter (2026-05) is roughly
+$0.60/M input + $2.50/M output. A steady-state tick consumes
+~3000 tokens (mostly input). One operator's hourly heartbeat
+= ~720 ticks/month ≈ 2.16M tokens, dominated by input
+(~$1.30/month). DeepSeek V3.1 is cheaper still (~$0.27/M
+input). The spend cap on the OpenRouter dashboard catches
+runaway loops before they matter.
 
 **What this integration does NOT do**:
 - No streaming. The tick is one synchronous request/response.
