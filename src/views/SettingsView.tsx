@@ -236,12 +236,12 @@ export default function SettingsView() {
   };
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-2xl">
+    <div className="flex flex-col gap-4 md:gap-6 p-4 md:p-6 max-w-2xl">
       <Card>
         <CardHeader>
           <CardTitle>Profile</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-3">
           <p>
             <strong>Name:</strong> {consultant?.name}
           </p>

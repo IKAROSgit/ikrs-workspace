@@ -1,16 +1,6 @@
-import { Mail, Calendar, FolderOpen, CheckSquare, FileText, Bot, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { NAV_ITEMS } from "./navItems";
 import type { ViewId } from "@/Router";
-
-const NAV_ITEMS: { id: ViewId; icon: typeof Mail; label: string }[] = [
-  { id: "inbox", icon: Mail, label: "Inbox" },
-  { id: "calendar", icon: Calendar, label: "Calendar" },
-  { id: "files", icon: FolderOpen, label: "Files" },
-  { id: "tasks", icon: CheckSquare, label: "Tasks" },
-  { id: "notes", icon: FileText, label: "Notes" },
-  { id: "claude", icon: Bot, label: "Claude Code" },
-  { id: "settings", icon: Settings, label: "Settings" },
-];
 
 interface SideRailProps {
   activeView: ViewId;

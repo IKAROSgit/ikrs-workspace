@@ -1,7 +1,14 @@
 import type { McpHealth } from "@/types";
 
 interface StatusBarProps {
+  /** Email of the signed-in consultant (Firebase Auth identity). */
   connectedEmail?: string;
+  /**
+   * Whether the active engagement has a Google OAuth token stored.
+   * `null` during the initial keychain check (no decoration shown
+   * to avoid flashing "not connected" on first paint).
+   */
+  googleLinked?: boolean | null;
   mcpStatuses: McpHealth[];
   isOnline: boolean;
 }
@@ -16,11 +23,21 @@ function HealthDot({ status }: { status: McpHealth["status"] }) {
   return <span className={`w-2 h-2 rounded-full ${color}`} />;
 }
 
-export function StatusBar({ connectedEmail, mcpStatuses, isOnline }: StatusBarProps) {
+export function StatusBar({
+  connectedEmail,
+  googleLinked,
+  mcpStatuses,
+  isOnline,
+}: StatusBarProps) {
   return (
     <footer className="flex items-center h-6 px-4 border-t border-border bg-muted text-xs text-muted-foreground gap-4">
       {connectedEmail ? (
-        <span>Connected: {connectedEmail}</span>
+        <span>
+          Connected: {connectedEmail}
+          {googleLinked === true && (
+            <span className="ml-1 text-green-500">· Google</span>
+          )}
+        </span>
       ) : (
         <span>No account linked</span>
       )}

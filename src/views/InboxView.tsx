@@ -45,7 +45,7 @@ export default function InboxView() {
   return (
     <div className="flex flex-col h-full">
       <OfflineBanner feature="Gmail" />
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">Inbox</h2>
         <div className="flex gap-1">
           <Button

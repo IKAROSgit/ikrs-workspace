@@ -35,7 +35,7 @@ export default function CalendarView() {
   return (
     <div className="flex flex-col h-full">
       <OfflineBanner feature="Google Calendar" />
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 border-b border-border">
         <h2 className="text-sm font-semibold">Calendar</h2>
         <div className="flex gap-1">
           <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>
