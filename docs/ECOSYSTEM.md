@@ -8,7 +8,7 @@ the enforcement rule.
 
 > "If you didn't update ECOSYSTEM.md, you didn't finish the work."
 
-Last verified: 2026-05-11 (Phase I.0 hardening + OpenRouter heartbeat switch).
+Last verified: 2026-05-31 (Phase I.1 UI hardening + architecture diagram + Phase O.1 vault sync via rclone bisync).
 See `git log -1 -- docs/ECOSYSTEM.md`. If the most recent commit to a
 file in this list pre-dates an architecture-touching commit elsewhere,
 this doc is stale and trusting it is unsafe.
@@ -57,6 +57,7 @@ table (preserve history) and remove the section.
 | GitHub Actions CI | Lint/test/build/docs-check | §3.3, §8 | ✅ |
 | Phase E heartbeat audit log (JSONL) | Local per-tick + per-action audit | §3.2, §5.1 | ✅ |
 | Phase F encrypted token sync | Per-engagement OAuth via Firestore (AES-256-GCM, WebCrypto TS + `cryptography` Python) | §3.4, §4, §5.4 | 🚧 F.1-F.6 landed; F.7 (adversarial review) + F.8 (deploy) pending |
+| rclone (vault Drive ⇄ VM bisync) | Mirror the `Claude - IKRS` Obsidian vault between Drive and VM disk every 10 min, as the foundation for VM-native Obsidian (Phase O) | §3.2, §5.6 | ✅ |
 
 **Status legend**: ✅ documented thoroughly • ⚠️ partial (sections
 mention it but no dedicated block) • ❌ undocumented • 🚧 planned
@@ -132,6 +133,10 @@ subscription, and the same code clone-and-go.
    └─────────────────────────────────────┘                        
 ```
 
+A clickable component map (Mermaid) is at
+**[docs/architecture.md](./architecture.md)** — each node links to
+its source folder.
+
 Three layers:
 - **Tauri app** — operator's UI, OAuth, Claude session host, vault writer.
 - **Tier I (in-app heartbeat)** — runs while app is open. Verifies Tier
@@ -204,6 +209,11 @@ makes the engagement invisible to the operator.**
 | `/etc/systemd/system/ikrs-heartbeat.timer` | systemd timer (OnUnitActiveSec=1h, Persistent) | 0644 | `root:root` |
 | `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-state.json` | TickState (last_tick_ts, last_action_summaries, last_vault_mtimes, ...) | 0600 | `ikrs:ikrs` |
 | `/home/moe_ikaros_ae/vaults/<engagement>/_memory/heartbeat-log.jsonl` | Append-only audit log: 1 line per tick + 1 line per action | 0644 | `ikrs:ikrs` |
+| `/home/moe_ikaros_ae/vault/Claude-IKRS/` | Local mirror of the Obsidian vault from `99 Agent Drive/Claude - IKRS` (Phase O.1; see §5.6). 4,506 files / ~1.07 GiB after the 2026-05-31 initial seed. | 0755 | `moe_ikaros_ae` |
+| `/home/moe_ikaros_ae/.cache/rclone-bisync/` | rclone bisync working dir (listings, deltas, recovery state) | 0755 | `moe_ikaros_ae` |
+| `/home/moe_ikaros_ae/.local/state/rclone-bisync.log` | Append-only rclone bisync log | 0644 | `moe_ikaros_ae` |
+| `/home/moe_ikaros_ae/.config/systemd/user/rclone-vault-bisync.{service,timer}` | User-level systemd unit + 10-min timer driving the bisync | 0644 | `moe_ikaros_ae` |
+| `/home/moe_ikaros_ae/.config/rclone/rclone.conf` | rclone remote config — the `gdrive_ikrs` remote points at the SA key file by path; no secrets baked in | 0600 | `moe_ikaros_ae` |
 
 VM accessed via Tailscale (`100.89.160.3` mapped to alias `elara-vm`).
 SSH user: `moe_ikaros_ae`. Tailscale identity: `moe@ikaros.ae`. Sudo
@@ -255,6 +265,13 @@ firestore:rules` and `firestore:indexes`.
 | M3 Phase 4 (timesheets) | Pending design | pending | |
 | **M3 Phase E** | **Autonomous heartbeat (dual-tier)** | **shipped, soaking on elara-vm** | Spec: `docs/specs/m3-phase-e-autonomous-heartbeat.md` |
 | **M3 Phase F** | **Multi-engagement OAuth via Firestore-synced tokens** | **in progress — F.1 spec locked, F.2-F.8 to follow** | Spec: `docs/specs/m3-phase-f-token-sync.md`. Pre-code adversarial challenge passed (3 showstoppers fixed). Tauri writes AES-256-GCM encrypted tokens to `engagements/{eid}/google_tokens/{provider}`; heartbeat reads + decrypts per-engagement via Admin SDK. |
+| **M3 Phase I.0** | UI layout-system audit | shipped 2026-05-11 | `docs/ui-audit/2026-05-06-i0-baseline.md` — 7 views audited, 5 OK + 1 minor flag; baseline established. |
+| **M3 Phase I.1** | UI hardening (responsive + StatusBar polish) | shipped 2026-05-31 | PR #2. Closes the I.0 backlog: Tailwind `md`-based responsive system, hamburger drawer for `w-14` sidebar below `md`, kanban stacks vertically `<md`, SettingsView density + responsive padding, StatusBar shows consultant email + `· Google` indicator, per-view responsive header padding. Two adversarial-review rounds, vitest 104/105 (1 pre-existing failure on main). |
+| **M3 Phase O.1** | Obsidian-on-VM — vault sync (rclone bisync) | shipped 2026-05-31 | `99 Agent Drive/Claude - IKRS` ⇄ `~/vault/Claude-IKRS` via systemd user timer (`rclone-vault-bisync.timer`, every 10 min). Initial seed 4,506 files / 1.076 GiB. SA `elara-vm-sa` (Content Manager on the shared drive) holds the keys. See §5.6. |
+| **M3 Phase O.2** | Obsidian-on-VM — Obsidian Desktop in `elara-sanctuary` (Debian noVNC) | planned | Install Obsidian.app inside the existing sanctuary container, bind-mount `~/vault/Claude-IKRS` into it, auto-launch on noVNC session. |
+| **M3 Phase O.3** | Obsidian-on-VM — Local REST API + obsidian-mcp-tools plugins | planned | Install plugins into the vault's `.obsidian/plugins/`, generate REST API key → store in Secret Manager as `OBSIDIAN_API_KEY` (never plaintext on disk). |
+| **M3 Phase O.4** | Obsidian-on-VM — wire MCP server into fleet `.claude` | planned | Build artifacts at `~/projects/integrations/obsidian-mcp-tools/dist/mcp-server` are ready; this phase wires them into agent runtime config. |
+| **M3 Phase O.5** | Obsidian-on-VM — Mac Claude Desktop config | planned | `~/Library/Application Support/Claude/claude_desktop_config.json` SSH-spawns the VM-side MCP server with key fetched from Secret Manager at spawn time. |
 
 ## 5. Heartbeat (Phase E) operational reference
 
@@ -620,6 +637,38 @@ sudo systemctl restart ikrs-heartbeat.service
 # Update Mac .env.local: VITE_TOKEN_ENCRYPTION_KEY=<new key>
 ```
 
+**Trigger vault bisync manually** (Phase O.1):
+```bash
+ssh moe_ikaros_ae@elara-vm
+systemctl --user start rclone-vault-bisync.service
+# Or invoke rclone directly with the same flags the unit uses:
+rclone bisync gdrive_ikrs: ~/vault/Claude-IKRS \
+  --create-empty-src-dirs --conflict-resolve=newer --conflict-loser=num \
+  --resilient --recover \
+  --workdir ~/.cache/rclone-bisync \
+  --log-file ~/.local/state/rclone-bisync.log
+```
+
+**See last vault bisync result** (Phase O.1):
+```bash
+ssh moe_ikaros_ae@elara-vm
+systemctl --user status rclone-vault-bisync.service --no-pager | head -20
+systemctl --user list-timers rclone-vault-bisync.timer
+tail -50 ~/.local/state/rclone-bisync.log
+```
+
+**Recover from bisync state corruption** ("cannot find prior listing"):
+```bash
+# Re-baseline both sides. Inspect the workdir first so nothing
+# critical is wiped:
+ls -la ~/.cache/rclone-bisync/
+rclone bisync gdrive_ikrs: ~/vault/Claude-IKRS --resync \
+  --create-empty-src-dirs --conflict-resolve=newer --conflict-loser=num \
+  --workdir ~/.cache/rclone-bisync \
+  --log-file ~/.local/state/rclone-bisync.log
+# After a clean --resync, the regular timer takes over.
+```
+
 ### 5.5 OpenRouter integration
 
 **Why it exists.** OpenRouter is the LLM gateway the rest of the
@@ -654,24 +703,13 @@ any drift. This keeps the adapter model-agnostic so we can route
 through Kimi, DeepSeek, future Claude/GPT/etc. without re-tuning
 the response shape.
 
-**Model selection.**
-- Current default: `z-ai/glm-4.5-air:free` — chosen 2026-05-11
-  after the OpenRouter account (shared with OpenClaw) was found
-  to have zero purchased credits (HTTP 402 on Kimi K2). GLM-4.5-Air
-  is a free-tier reasoning model that emits clean JSON for the
-  Tier II schema; tested at ~6400 tokens/tick on the real BLR-WORLD
-  vault, ~3.5min duration. Sufficient for hourly cadence.
-- Paid alternative (requires `openrouter.ai/settings/credits`
-  deposit, ~$1-2/month at heartbeat scale):
-  `moonshotai/kimi-k2-0905` — 262k context, 8192 max output, the
-  model OpenClaw's openclaw.json points at. Switch via
-  `sudo nano /etc/ikrs-heartbeat/heartbeat.toml; systemctl restart`.
-- Other tested free models: `openai/gpt-oss-120b:free` works for
-  small prompts but exhausts max_output_tokens on full heartbeat
-  prompts (heavy reasoning overhead).
-- Other paid options OpenClaw uses: `deepseek/deepseek-chat-v3.1`
-  (cheaper, Donna/Specter), `deepseek/deepseek-r1-0528` (reasoning,
-  Hermes/Atlas).
+**Model selection (matches OpenClaw defaults).**
+- Default: `moonshotai/kimi-k2-0905` — 262k context, 8192 max
+  output, Elara/Athena's primary model.
+- Alternative: `deepseek/deepseek-chat-v3.1` — cheaper, used by
+  Donna/Specter for higher-volume agents.
+- Alternative: `deepseek/deepseek-r1-0528` — reasoning model;
+  expensive, reserved for hardest Hermes/Atlas paths.
 
 The adapter accepts both `moonshotai/kimi-k2-0905` and the
 OpenClaw-style `openrouter/moonshotai/kimi-k2-0905` (the
@@ -705,16 +743,13 @@ All of these are caught by the tick orchestrator's
 `except LlmError` and recorded on `heartbeat_health.errorCode` —
 they never crash the service.
 
-**Cost posture.** Today's deployed model
-(`z-ai/glm-4.5-air:free`) is $0 — OpenRouter's free tier is
-rate-limited but fits comfortably under the hourly cadence.
-Kimi K2 at OpenRouter (2026-05) is roughly $0.60/M input +
-$2.50/M output. A steady-state tick consumes ~3000-6500 tokens
-(mostly input). One operator's hourly heartbeat = ~720 ticks/
-month ≈ 2.16M tokens, dominated by input (~$1.30/month if on
-Kimi K2 paid). DeepSeek V3.1 is cheaper still (~$0.27/M input).
-The spend cap on the OpenRouter dashboard catches runaway loops
-before they matter.
+**Cost posture.** Kimi K2 at OpenRouter (2026-05) is roughly
+$0.60/M input + $2.50/M output. A steady-state tick consumes
+~3000 tokens (mostly input). One operator's hourly heartbeat
+= ~720 ticks/month ≈ 2.16M tokens, dominated by input
+(~$1.30/month). DeepSeek V3.1 is cheaper still (~$0.27/M
+input). The spend cap on the OpenRouter dashboard catches
+runaway loops before they matter.
 
 **What this integration does NOT do**:
 - No streaming. The tick is one synchronous request/response.
@@ -752,6 +787,101 @@ before they matter.
 - Per-engagement model choice: when one client's domain benefits
   from a specific model, override at the `[[engagements]]` level
   rather than the global `[llm]` block.
+
+### 5.6 Vault sync (rclone bisync, Drive ⇄ VM)
+
+**Why it exists.** The fleet's curated narrative — `VAULT_INDEX.md`,
+agent SOULs, briefings, plans, the whole `Claude - IKRS` Obsidian
+vault — lives in `99 Agent Drive` on Google Drive. Pre-Phase O the
+only way agents reached that content was the Drive API firehose +
+nightly metadata index (`drive-metadata-index.sh`), which gives
+discovery but not Obsidian's structured semantics (templates, links,
+plugins, semantic search). VM-native Obsidian (Phase O.2 onward)
+needs a local-disk copy of the vault that stays in lockstep with
+Drive — that's the job of this layer.
+
+**Architecture.**
+- Remote: `gdrive_ikrs` (rclone remote, `drive` backend), authenticated
+  as the `elara-vm-sa@ikaros-portal` service account (same ADC key
+  used by Tier II Admin SDK), scoped to `drive` (read + write), team
+  drive `99 Agent Drive` (`0AHzBQzguP12fUk9PVA`), rooted at the
+  `Claude - IKRS` folder (`1UML8usJJ--7XDgqlL0GIrnVU1lZY03nz`).
+- Local: `/home/moe_ikaros_ae/vault/Claude-IKRS/` — 4,506 files /
+  ~1.07 GiB after the 2026-05-31 initial seed.
+- Direction: **BIDIRECTIONAL** via `rclone bisync`. Both Drive→VM and
+  VM→Drive deltas propagate each tick. There is no separate "VM is
+  authoritative" or "Drive is authoritative" mode.
+- Conflict policy: `--conflict-resolve=newer` (newer mtime wins),
+  `--conflict-loser=num` (the older version stays as
+  `<name>.conflict1.<ext>` locally so nothing is silently destroyed).
+- Resilience: `--resilient --recover` survive transient Drive API
+  hiccups by reusing the last valid listings instead of forcing a
+  full re-walk.
+- Schedule: systemd **user** timer `rclone-vault-bisync.timer`,
+  `OnUnitActiveSec=10min`, `Persistent=true`. First fire 2 min after
+  user-session boot; ten-minute steady state.
+
+**Setup ritual** (one-time, 2026-05-31):
+1. Confirm `elara-vm-sa` has Content Manager (or higher) on the `99
+   Agent Drive` shared drive. Verified by attempting an `rclone copy`
+   + `rclone delete` of a temp file at the drive root — both succeeded.
+2. Upgrade rclone past 1.65 (Debian's `1.60.1-DEV` lacks
+   `--conflict-resolve` and `--create-empty-src-dirs`). On the VM:
+   `sudo rclone selfupdate` brought it to `v1.74.2`.
+3. Create the remote (no interactive config needed, no secrets in the
+   conf file — only a path reference to the SA file):
+   ```
+   rclone config create gdrive_ikrs drive \
+     scope=drive \
+     service_account_file=~/.config/gcloud/application_default_credentials.json \
+     team_drive=0AHzBQzguP12fUk9PVA \
+     root_folder_id=1UML8usJJ--7XDgqlL0GIrnVU1lZY03nz \
+     --non-interactive
+   ```
+4. Initial seed (`--resync` initialises bisync's baseline listings;
+   one-time only):
+   ```
+   rclone bisync gdrive_ikrs: ~/vault/Claude-IKRS \
+     --resync --create-empty-src-dirs --conflict-resolve=newer \
+     --conflict-loser=num --workdir ~/.cache/rclone-bisync \
+     --log-file ~/.local/state/rclone-bisync.log --log-level INFO
+   ```
+   Took 13m4s for 4,511 files / 1.076 GiB.
+5. Install `~/.config/systemd/user/rclone-vault-bisync.{service,timer}`
+   then `systemctl --user daemon-reload; systemctl --user enable
+   --now rclone-vault-bisync.timer`.
+
+**Error handling.**
+- Drive duplicate filenames in same folder (rare but real, e.g.
+  `IKRS-X/SOL-2026-28-Logistics/IKX-QT-2026-SOL-LOG-001.pptx`):
+  bisync emits a `NOTICE` and ignores the duplicate. Not fatal.
+- Network blip mid-tick: `--resilient --recover` swallow it; next
+  tick re-converges.
+- Bisync state corruption ("cannot find prior listing"): re-baseline
+  with `--resync` (see §5.4 runbook).
+
+**What this integration does NOT do.**
+- No backup. bisync is propagation, not retention. A delete in Drive
+  that replicates to VM is just a delete; Drive's trash is the
+  rollback path.
+- No conflict merge for binary files. `--conflict-resolve=newer`
+  picks one side; nobody manually merges a `.png` or `.docx`.
+- No real-time sync. 10-minute granularity is the floor — an inotify
+  watcher for sub-minute push is a future Phase O enhancement.
+- No multi-vault. One remote, one local dir.
+- No multi-drive. The SA only sees the `99 Agent Drive` shared drive
+  (10/10 visibility belongs to the operator's `gws` OAuth identity,
+  not to the SA). That's the right scope for the vault, which lives
+  only in `99 Agent Drive`.
+
+**Future work (Phase O.2 onward).**
+- Obsidian Desktop in `elara-sanctuary`, with this vault dir
+  bind-mounted into the container.
+- Local REST API + obsidian-mcp-tools plugins; key in Secret Manager.
+- MCP server wired into fleet's `.claude` config.
+- Mac Claude Desktop config: SSH-spawn the VM MCP, key fetched from
+  Secret Manager at spawn time (never plaintext on Mac).
+- Optional: inotify-driven push for sub-minute Drive→VM lag.
 
 ## 6. Schema reference
 
