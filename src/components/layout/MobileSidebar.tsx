@@ -46,7 +46,7 @@ export function MobileSidebar({
       <DialogPrimitive.Trigger
         render={
           <button
-            className="p-2 -ml-2 text-muted-foreground hover:text-foreground"
+            className="p-2 -ml-2 rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
             aria-label="Open navigation"
           >
             <Menu size={18} />
