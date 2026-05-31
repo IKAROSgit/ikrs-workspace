@@ -39,7 +39,7 @@ export function StatusBar({
           )}
         </span>
       ) : (
-        <span>No account</span>
+        <span>No account linked</span>
       )}
       <span className="flex-1" />
       {!isOnline && <span className="text-yellow-500">Offline</span>}

@@ -55,7 +55,7 @@ export function MobileSidebar({
       />
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
-        <DialogPrimitive.Popup className="fixed inset-y-0 left-0 z-50 flex flex-col w-64 bg-sidebar border-r border-border outline-none data-open:animate-in data-open:slide-in-from-left data-closed:animate-out data-closed:slide-out-to-left">
+        <DialogPrimitive.Popup className="fixed inset-y-0 left-0 z-50 flex flex-col w-64 bg-sidebar border-r border-border outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-left-full data-closed:animate-out data-closed:fade-out-0 data-closed:slide-out-to-left-full">
           <DialogPrimitive.Title className="sr-only">
             Navigation
           </DialogPrimitive.Title>
@@ -65,7 +65,7 @@ export function MobileSidebar({
             <DialogPrimitive.Close
               render={
                 <button
-                  className="p-1 text-muted-foreground hover:text-foreground"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
                   aria-label="Close navigation"
                 >
                   <X size={16} />

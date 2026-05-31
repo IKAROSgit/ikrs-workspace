@@ -236,7 +236,7 @@ export default function SettingsView() {
   };
 
   return (
-    <div className="flex flex-col gap-4 md:gap-6 p-4 md:p-6 max-w-2xl h-full">
+    <div className="flex flex-col gap-4 md:gap-6 p-4 md:p-6 max-w-2xl">
       <Card>
         <CardHeader>
           <CardTitle>Profile</CardTitle>

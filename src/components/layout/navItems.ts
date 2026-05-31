@@ -1,9 +1,10 @@
 import { Mail, Calendar, FolderOpen, CheckSquare, FileText, Bot, Settings } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { ViewId } from "@/Router";
 
 export interface NavItem {
   id: ViewId;
-  icon: typeof Mail;
+  icon: LucideIcon;
   label: string;
 }
 
